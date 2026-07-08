@@ -157,3 +157,24 @@ memo/leave/certificate PDFs are in `docs/samples/`.
   password, activate/deactivate. Service `userMgmtService.js`; backend under
   `/api/v1/users/admin/users/`. Bootstrap the first admin with
   `python manage.py seed_admin`.
+
+## Memos - 3-level workflow (all roles can create)
+
+Sidebar **Memos** section (between Leave Management and My Records): Create Memo
+(everyone), My Memos, All Memos, plus Pending Reviews (checkers) and Pending
+Approvals (approvers).
+
+| Route | Page |
+|-------|------|
+| `/memos` | `MemoList` - filterable table |
+| `/memos/create` | `CreateMemo` - template loader, TipTap editor, checker picker, live preview |
+| `/memos/my` | `MyMemos` - your memos (status tabs) |
+| `/memos/:id` | `MemoDetail` - content, metadata, approval timeline, role-aware actions, Download PDF (approved) |
+| `/memos/pending-reviews` | `PendingMemoReviews` - checker queue |
+| `/memos/pending-approvals` | `PendingMemoApprovals` - approver queue |
+
+Workflow: **author (any role) -> checker -> approver**. The maker optionally picks a
+checker (else auto by department); the checker picks the approver during review.
+Service `memoService.js`; rich text via **TipTap** (HTML output). Every transition
+notifies the relevant user (bell + email). Full per-role guide:
+[`docs/user-manual/memo-guide.md`](../docs/user-manual/memo-guide.md).
