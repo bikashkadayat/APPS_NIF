@@ -1,9 +1,10 @@
 import api from './api';
+import { unwrapPaginated } from './utils';
 
 export const adminService = {
   getUsers: async () => {
     const response = await api.get('/users/');
-    return response.data;
+    return unwrapPaginated(response);
   },
 
   createUser: async (data) => {
@@ -22,7 +23,7 @@ export const adminService = {
 
   getLeaves: async () => {
     const response = await api.get('/admin/leaves/');
-    return response.data;
+    return unwrapPaginated(response);
   },
 
   createLeave: async (data) => {
@@ -41,7 +42,7 @@ export const adminService = {
 
   getBalances: async () => {
     const response = await api.get('/admin/balances/');
-    return response.data;
+    return unwrapPaginated(response);
   },
 
   createBalance: async (data) => {
