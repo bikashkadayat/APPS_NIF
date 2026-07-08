@@ -1,5 +1,8 @@
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import Leave, LeaveBalance
+
+User = get_user_model()
 
 class LeaveBalanceSerializer(serializers.ModelSerializer):
     remaining = serializers.ReadOnlyField()
@@ -24,4 +27,144 @@ class LeaveSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if data['start_date'] > data['end_date']:
             raise serializers.ValidationError("End date must be after start date.")
+        if 'approver' in data and data['approver']:
+            try:
+                approver = User.objects.get(id=data['approver'].id if hasattr(data['approver'], 'id') else data['approver'])
+                if approver.role not in [User.Roles.APPROVER, User.Roles.ADMIN]:
+                    raise serializers.ValidationError("Approver must have approver or admin role.")
+            except User.DoesNotExist:
+                raise serializers.ValidationError("Selected approver does not exist.")
         return data
+
+
+# ===========================================================================
+# Phase 4 - Enterprise Leave Records serializers (appended)
+# ===========================================================================
+from .models import (  # noqa: E402
+    Department,
+    EnterpriseLeaveBalance,
+    Holiday,
+    LeaveDayRecord,
+    LeavePolicy,
+    LeaveType,
+    MonthlyLeaveSummary,
+    WeeklyLeaveSummary,
+)
+
+
+class UserMiniSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ["id", "full_name", "email", "role", "department"]
+
+    def get_full_name(self, obj):
+        return obj.get_full_name() or obj.username
+
+
+class LeaveTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeaveType
+        fields = [
+            "id", "code", "name", "default_days_per_year", "is_paid",
+            "allow_half_day", "allow_carry_forward", "max_carry_forward_days",
+            "requires_document", "min_notice_days", "is_active", "display_color",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    head = UserMiniSerializer(read_only=True)
+
+    class Meta:
+        model = Department
+        fields = ["id", "name", "code", "head", "parent", "is_active"]
+
+
+class LeavePolicySerializer(serializers.ModelSerializer):
+    leave_type_code = serializers.CharField(source="leave_type.code", read_only=True)
+    department_code = serializers.CharField(source="department.code", read_only=True, default=None)
+
+    class Meta:
+        model = LeavePolicy
+        fields = [
+            "id", "leave_type", "leave_type_code", "department", "department_code",
+            "role", "days_per_year", "effective_from", "effective_until",
+            "created_by", "created_at",
+        ]
+        read_only_fields = ["id", "created_by", "created_at"]
+
+
+class HolidaySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Holiday
+        fields = ["id", "date", "name", "holiday_type", "description", "is_active"]
+
+
+class LeaveDayRecordSerializer(serializers.ModelSerializer):
+    """Compact per-day record for calendar rendering (color-coded by type)."""
+    leave_type_code = serializers.CharField(source="leave_type.code", read_only=True)
+    display_color = serializers.CharField(source="leave_type.display_color", read_only=True)
+    portion_days = serializers.DecimalField(max_digits=3, decimal_places=1, read_only=True)
+
+    class Meta:
+        model = LeaveDayRecord
+        fields = [
+            "id", "date", "day_portion", "portion_days", "leave_type",
+            "leave_type_code", "display_color", "status",
+            "is_holiday", "is_weekend", "week_number", "month", "year",
+        ]
+
+
+class EnterpriseLeaveBalanceSerializer(serializers.ModelSerializer):
+    """Phase 4 balance with the computed available_days. (Named to avoid
+    clashing with the Level 1 LeaveBalanceSerializer above.)"""
+    leave_type_code = serializers.CharField(source="leave_type.code", read_only=True)
+    leave_type_name = serializers.CharField(source="leave_type.name", read_only=True)
+    available_days = serializers.DecimalField(max_digits=7, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = EnterpriseLeaveBalance
+        fields = [
+            "id", "user", "leave_type", "leave_type_code", "leave_type_name", "year",
+            "entitled_days", "carried_forward_days", "used_days", "pending_days",
+            "encashed_days", "forfeited_days", "adjustment_days", "available_days",
+            "last_recomputed_at",
+        ]
+        read_only_fields = fields
+
+
+class WeeklyLeaveSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WeeklyLeaveSummary
+        fields = [
+            "id", "user", "year", "week_number", "week_start_date", "week_end_date",
+            "total_leave_days", "by_type", "approved_days", "pending_days",
+            "rejected_days", "working_days", "attendance_percentage", "last_recomputed_at",
+        ]
+        read_only_fields = fields
+
+
+class MonthlyLeaveSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MonthlyLeaveSummary
+        fields = [
+            "id", "user", "year", "month", "total_leave_days", "by_type",
+            "approved_days", "pending_days", "working_days", "attendance_percentage",
+            "carry_forward_earned", "last_recomputed_at",
+        ]
+        read_only_fields = fields
+
+
+class LeaveHistorySerializer(serializers.Serializer):
+    """
+    Rich, read-only composite for a user's year: profile, all balances, recent
+    leaves, and the monthly summaries. Built by the my-history endpoint.
+    """
+    user = UserMiniSerializer(read_only=True)
+    year = serializers.IntegerField(read_only=True)
+    balances = EnterpriseLeaveBalanceSerializer(many=True, read_only=True)
+    recent_leaves = LeaveSerializer(many=True, read_only=True)
+    monthly_summaries = MonthlyLeaveSummarySerializer(many=True, read_only=True)
