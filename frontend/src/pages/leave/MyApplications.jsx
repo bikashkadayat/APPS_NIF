@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLeaves } from '../../hooks/useLeaves';
 import { useAuth } from '../../hooks/useAuth';
 import Badge from '../../components/common/Badge';
+import LeaveDocActions from '../../components/documents/LeaveDocActions';
 import { ArrowLeft, Plus } from 'lucide-react';
 
 const MyApplications = () => {
@@ -88,6 +89,7 @@ const MyApplications = () => {
                 <th>Leave Details</th>
                 <th>Dates</th>
                 <th>Status</th>
+                <th>Documents</th>
               </tr>
             </thead>
             <tbody>
@@ -108,11 +110,16 @@ const MyApplications = () => {
                   <td>
                     <Badge status={leave.status} />
                   </td>
+                  <td>
+                    {leave.status === 'approved'
+                      ? <LeaveDocActions leaveId={leave.id} />
+                      : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Available when approved</span>}
+                  </td>
                 </tr>
               ))}
               {myLeaves.length === 0 && (
                 <tr>
-                  <td colSpan="4" style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
+                  <td colSpan="5" style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
                     No applications found.
                   </td>
                 </tr>

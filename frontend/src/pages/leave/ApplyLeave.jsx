@@ -30,6 +30,7 @@ const ApplyLeave = () => {
     start: '',
     end: '',
     manager: '',
+    approver_id: '',
     contact: '',
     reason: '',
     handover: ''
@@ -166,18 +167,23 @@ const ApplyLeave = () => {
         <div className="fgrid">
           <div className="fg">
             <label><User size={16} /> Reporting Manager <span className="req">*</span></label>
-            <select id="lv-manager" value={formData.manager} onChange={handleChange}>
-              <option value="">Select Manager</option>
-              {managers.map(m => {
-                const name = m.first_name && m.last_name ? `${m.first_name} ${m.last_name}` : m.username || m.email;
-                const roleLabel = m.role === 'approver' ? 'Approver' : m.role;
-                return (
-                  <option key={m.id} value={`${name} — ${roleLabel}`}>
-                    {name} — {roleLabel}
-                  </option>
-                );
-              })}
-            </select>
+              <select id="lv-manager" value={formData.manager} onChange={(e) => {
+                const selectedId = e.target.value;
+                const selected = managers.find(m => m.id === selectedId);
+                const name = selected ? `${selected.first_name} ${selected.last_name}`.trim() || selected.username || selected.email : '';
+                setFormData({ ...formData, manager: name, approver_id: selectedId });
+              }}>
+                <option value="">Select Manager</option>
+                {managers.map(m => {
+                  const name = m.first_name && m.last_name ? `${m.first_name} ${m.last_name}` : m.username || m.email;
+                  const roleLabel = m.role === 'approver' ? 'Approver' : m.role;
+                  return (
+                    <option key={m.id} value={m.id}>
+                      {name} — {roleLabel}
+                    </option>
+                  );
+                })}
+              </select>
           </div>
           <div className="fg">
             <label><User size={16} /> Contact During Leave</label>

@@ -3,22 +3,28 @@ import { useNavigate } from 'react-router-dom';
 import { useLeaves } from '../../hooks/useLeaves';
 import { useAuth } from '../../hooks/useAuth';
 import LeaveCard from '../../components/common/LeaveCard';
+import DashboardRecordsSummary from '../../components/leave-records/DashboardRecordsSummary';
 import { CalendarDays, Stethoscope, Briefcase, Plane, Plus, ArrowRight, ClipboardCheck, Users, Calendar, FileText, CheckCircle, Clock, XCircle } from 'lucide-react';
 
 const LeaveDashboard = () => {
   const navigate = useNavigate();
   const { leaves, balances, loading, fetchLeaves, fetchBalances } = useLeaves();
   const { role, user } = useAuth();
-  const [showWelcome, setShowWelcome] = useState(false);
-
-  useEffect(() => {
+  const [showWelcome, setShowWelcome] = useState(() => {
     const justLoggedIn = localStorage.getItem('justLoggedIn');
     if (justLoggedIn) {
       localStorage.removeItem('justLoggedIn');
-      setShowWelcome(true);
-      setTimeout(() => setShowWelcome(false), 4000);
+      return true;
     }
-  }, []);
+    return false;
+  });
+
+  useEffect(() => {
+    if (showWelcome) {
+      const timer = setTimeout(() => setShowWelcome(false), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [showWelcome]);
 
   useEffect(() => {
     fetchLeaves();
@@ -41,7 +47,7 @@ const LeaveDashboard = () => {
 
   const recent = leaves.slice(0, 4);
 
-  if (role === 'approver' || role === 'admin') {
+  if (role === 'checker' || role === 'approver' || role === 'admin') {
     return (
       <div className="page" style={{ paddingBottom: '80px' }}>
         {showWelcome && (
@@ -236,8 +242,11 @@ const LeaveDashboard = () => {
         </div>
       </div>
 
+      {/* Phase 6: enterprise leave-records summary (compact) */}
+      <DashboardRecordsSummary />
+
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: '32px' }}>
-        
+
         {/* MAIN COLUMN */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
           

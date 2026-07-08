@@ -39,6 +39,7 @@ const toBackendPayload = (data) => ({
   end_date: data.end,
   reason: data.reason,
   handover_notes: data.handover || '',
+  approver: data.approver_id || null,
 });
 
 export const leaveService = {

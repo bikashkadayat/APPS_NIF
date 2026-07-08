@@ -16,7 +16,7 @@ const PendingApprovals = () => {
   }, [fetchLeaves]);
 
   const canApprove = role === 'approver' || role === 'admin';
-  const canReview = ['approver', 'admin'].includes(role);
+  const canReview = ['approver', 'checker', 'admin'].includes(role);
 
   if (!canReview) {
     return (
@@ -30,7 +30,7 @@ const PendingApprovals = () => {
               Leave Management
             </div>
             <div className="pg-title">Access Denied</div>
-            <div className="pg-desc">Only approvers may view pending leave requests.</div>
+            <div className="pg-desc">Only reviewers may view pending leave requests.</div>
           </div>
           <div className="pg-head-right">
             <div className="pg-logo">
