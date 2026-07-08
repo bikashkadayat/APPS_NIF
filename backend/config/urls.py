@@ -3,13 +3,10 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import (
-    TokenRefreshView,
-)
 
 from leaves.views import LeaveViewSet, LeaveBalanceView, LeaveCalendarView
 from users.views import CurrentUserView, UserListView, ChangePasswordView
-from users.token_serializers import EmailLoginView
+from users.token_serializers import EmailLoginView, SafeTokenRefreshView
 from users.admin_views import AdminUserViewSet, AdminLeaveViewSet, AdminBalanceViewSet, AdminStatsView
 from config.health_views import HealthView, DetailedHealthView
 
@@ -30,7 +27,7 @@ urlpatterns = [
     
     # Auth APIs (JWT Authentication)
     path('api/v1/auth/login/', EmailLoginView.as_view(), name='token_obtain_pair'),
-    path('api/v1/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/v1/auth/refresh/', SafeTokenRefreshView.as_view(), name='token_refresh'),
     # Registration removed in Phase 2.5 (admin-created accounts only).
     path('api/v1/auth/user/', CurrentUserView.as_view(), name='token_user'),
     path('api/v1/auth/change-password/', ChangePasswordView.as_view(), name='change-password'),
