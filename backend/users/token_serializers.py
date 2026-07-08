@@ -4,8 +4,13 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+from audit.models import AuditLog
+from audit.services import log_action
 
 User = get_user_model()
+
 
 class EmailLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -14,34 +19,68 @@ class EmailLoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         email = attrs.get('email')
         password = attrs.get('password')
-        
+
         if not email or not password:
             raise serializers.ValidationError('Email and password are required.')
 
         try:
-            user = User.objects.get(email=email)
+            user = User.objects.select_related('department_ref').get(email=email)
         except User.DoesNotExist:
             raise serializers.ValidationError('Invalid email or password.')
 
         if not user.check_password(password):
             raise serializers.ValidationError('Invalid email or password.')
 
-        if not user.is_active:
-            raise serializers.ValidationError('User account is disabled.')
-
+        # is_active is deliberately NOT checked here; the view returns a 403 with
+        # a clear message (and audits it) for deactivated accounts.
         attrs['user'] = user
         return attrs
 
+
 class EmailLoginView(APIView):
+    """
+    UNIFIED login for all roles (Phase 2.5). Returns JWT tokens plus a `user`
+    block (including role + must_change_password) so the frontend can enforce a
+    first-login password change and redirect by role. URL is unchanged:
+    POST /api/v1/auth/login/
+    """
     permission_classes = [AllowAny]
-    
+
     def post(self, request):
         serializer = EmailLoginSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.validated_data['user']
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'access': str(refresh.access_token),
-                'refresh': str(refresh),
-            })
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user = serializer.validated_data['user']
+
+        if not user.is_active:
+            log_action(None, AuditLog.Action.OTHER, instance=user,
+                       changes={'event': 'LOGIN_BLOCKED_INACTIVE'}, request=request)
+            return Response(
+                {'detail': 'Account is deactivated. Please contact administrator.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        refresh = RefreshToken.for_user(user)
+
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+        log_action(user, AuditLog.Action.LOGIN, instance=user,
+                   changes={'event': 'LOGIN_SUCCESS'}, request=request)
+
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': {
+                'id': str(user.id),
+                'employee_id': user.employee_id,
+                'full_name': user.full_name,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'department': user.department_name,
+                'designation': user.designation,
+                'must_change_password': user.must_change_password,
+                'profile_photo': user.profile_photo.url if user.profile_photo else None,
+            },
+        })

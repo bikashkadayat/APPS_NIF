@@ -2,12 +2,16 @@ from rest_framework import generics, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from datetime import datetime
+from audit.models import AuditLog
+from audit.services import log_action
 from .models import User
 from leaves.models import Leave, LeaveBalance
 from leaves.serializers import LeaveSerializer, LeaveBalanceSerializer
+from leaves.filters import LeaveFilter
 from .serializers import UserSerializer, AdminUserCreateSerializer
 
 
@@ -17,23 +21,91 @@ class IsAdminOrSuperuser(IsAuthenticated):
 
 
 class AdminUserViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only user management (Phase 2.5). Mounted at both
+    /api/v1/admin/users/ (legacy) and /api/v1/users/admin/users/ (spec).
+    Every mutating action is transactional and audit-logged.
+    """
     serializer_class = UserSerializer
     permission_classes = [IsAdminOrSuperuser]
-    search_fields = ['username', 'email', 'first_name', 'last_name']
+    search_fields = ['username', 'email', 'first_name', 'last_name', 'employee_id']
+    filterset_fields = ['role', 'is_active']
 
     def get_queryset(self):
-        return User.objects.all().order_by('username')
+        return User.objects.select_related('department_ref').all().order_by('username')
 
     def get_serializer_class(self):
         if self.action == 'create':
             return AdminUserCreateSerializer
         return UserSerializer
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        log_action(request.user, AuditLog.Action.CREATE, instance=serializer.instance,
+                   changes={'event': 'USER_CREATED', 'role': serializer.instance.role}, request=request)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        serializer.save()
+        log_action(self.request.user, AuditLog.Action.UPDATE, instance=serializer.instance, request=self.request)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        log_action(self.request.user, AuditLog.Action.DELETE, instance=instance, request=self.request)
+        instance.delete()
+
+    @action(detail=True, methods=['post'], url_path='reset-password')
+    @transaction.atomic
+    def reset_password(self, request, pk=None):
+        import secrets
+        user = self.get_object()
+        new_password = request.data.get('password') or secrets.token_urlsafe(9)
+        user.set_password(new_password)
+        user.must_change_password = True  # force change on next login
+        user.save(update_fields=['password', 'must_change_password'])
+        log_action(request.user, AuditLog.Action.UPDATE, instance=user,
+                   changes={'event': 'PASSWORD_RESET'}, request=request)
+        return Response({'detail': 'Password reset.', 'generated_password': new_password})
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def deactivate(self, request, pk=None):
+        user = self.get_object()
+        if user.id == request.user.id:
+            return Response({'detail': 'You cannot deactivate your own account.'}, status=status.HTTP_400_BAD_REQUEST)
+        user.is_active = False
+        user.save(update_fields=['is_active'])
+        log_action(request.user, AuditLog.Action.UPDATE, instance=user,
+                   changes={'event': 'USER_DEACTIVATED'}, request=request)
+        return Response(UserSerializer(user).data)
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def activate(self, request, pk=None):
+        user = self.get_object()
+        user.is_active = True
+        user.save(update_fields=['is_active'])
+        log_action(request.user, AuditLog.Action.UPDATE, instance=user,
+                   changes={'event': 'USER_ACTIVATED'}, request=request)
+        return Response(UserSerializer(user).data)
+
+    @action(detail=True, methods=['post'], url_path='change-role')
+    @transaction.atomic
+    def change_role(self, request, pk=None):
+        user = self.get_object()
+        new_role = request.data.get('role')
+        if new_role not in User.Roles.values:
+            return Response({'detail': 'Invalid role.'}, status=status.HTTP_400_BAD_REQUEST)
+        old_role = user.role
+        user.role = new_role
+        user.save(update_fields=['role'])
+        log_action(request.user, AuditLog.Action.UPDATE, instance=user,
+                   changes={'event': 'ROLE_CHANGED', 'from': old_role, 'to': new_role}, request=request)
+        return Response(UserSerializer(user).data)
 
 
 class AdminStatsView(generics.GenericAPIView):
@@ -75,26 +147,24 @@ class AdminStatsView(generics.GenericAPIView):
 class AdminLeaveViewSet(viewsets.ModelViewSet):
     serializer_class = LeaveSerializer
     permission_classes = [IsAdminOrSuperuser]
-
-    def get_queryset(self):
-        return Leave.objects.select_related('user').order_by('-created_at')
-
-    def get_serializer_class(self):
-        return LeaveSerializer
-
-
-class AdminLeaveViewSet(viewsets.ModelViewSet):
-    serializer_class = LeaveSerializer
-    permission_classes = [IsAdminOrSuperuser]
+    filterset_class = LeaveFilter
+    search_fields = ['user__first_name', 'user__last_name', 'user__email', 'reason']
+    ordering_fields = ['created_at', 'start_date', 'end_date', 'status']
 
     def get_queryset(self):
         return Leave.objects.select_related('user', 'approver').order_by('-created_at')
 
     def perform_create(self, serializer):
         serializer.save()
+        log_action(self.request.user, AuditLog.Action.CREATE, instance=serializer.instance, request=self.request)
 
     def perform_update(self, serializer):
         serializer.save()
+        log_action(self.request.user, AuditLog.Action.UPDATE, instance=serializer.instance, request=self.request)
+
+    def perform_destroy(self, instance):
+        log_action(self.request.user, AuditLog.Action.DELETE, instance=instance, request=self.request)
+        instance.delete()
 
 
 class AdminBalanceViewSet(viewsets.ModelViewSet):
@@ -103,3 +173,15 @@ class AdminBalanceViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return LeaveBalance.objects.select_related('user').order_by('user__username')
+
+    def perform_create(self, serializer):
+        serializer.save()
+        log_action(self.request.user, AuditLog.Action.CREATE, instance=serializer.instance, request=self.request)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        log_action(self.request.user, AuditLog.Action.UPDATE, instance=serializer.instance, request=self.request)
+
+    def perform_destroy(self, instance):
+        log_action(self.request.user, AuditLog.Action.DELETE, instance=instance, request=self.request)
+        instance.delete()
