@@ -253,12 +253,26 @@ def submit_memo(memo, actor, override_reviewer_id=None, request=None):
     return memo
 
 
+def _is_admin(actor):
+    return getattr(actor, "role", None) == User.Roles.ADMIN
+
+
+def _override_meta(is_override, transition):
+    """Audit metadata that records when an admin acted outside their assignment."""
+    if is_override:
+        return {"transition": f"{transition}_admin_override", "admin_override": True}
+    return {"transition": transition}
+
+
 @transaction.atomic
 def review_memo(memo, actor, comment="", override_approver_id=None, request=None):
     memo = _lock(memo)
     if memo.status != Memo.Status.SUBMITTED:
         raise ValidationError("Only submitted memos can be reviewed.")
-    if memo.current_reviewer_id != actor.id:
+    # H1: the assigned reviewer OR an admin may act; admin acting on a memo not
+    # assigned to them is an override and is flagged in the audit trail.
+    admin_override = _is_admin(actor) and memo.current_reviewer_id != actor.id
+    if memo.current_reviewer_id != actor.id and not _is_admin(actor):
         raise ValidationError("Only the assigned reviewer can review this memo.")
 
     # Hybrid assignment: checker may pick the approver, else auto-resolve.
@@ -277,7 +291,7 @@ def review_memo(memo, actor, comment="", override_approver_id=None, request=None
     _record_step(memo, actor, MemoApprovalStep.Action.REVIEWED, comment=comment)
     create_audit_log(
         actor, AuditLog.Action.UPDATE, instance=memo,
-        metadata={"transition": "reviewed", "approver": str(approver.id)},
+        metadata={**_override_meta(admin_override, "reviewed"), "approver": str(approver.id)},
         request=request,
     )
     _notify_memo(approver, "MEMO_ASSIGNED_TO_REVIEW",
@@ -292,7 +306,9 @@ def approve_memo(memo, actor, comment="", request=None):
     memo = _lock(memo)
     if memo.status != Memo.Status.UNDER_REVIEW:
         raise ValidationError("Only memos under review can be approved.")
-    if memo.current_approver_id != actor.id:
+    # H1: the assigned approver OR an admin may act (admin acts = override).
+    admin_override = _is_admin(actor) and memo.current_approver_id != actor.id
+    if memo.current_approver_id != actor.id and not _is_admin(actor):
         raise ValidationError("Only the assigned approver can approve this memo.")
 
     memo.status = Memo.Status.APPROVED
@@ -302,7 +318,7 @@ def approve_memo(memo, actor, comment="", request=None):
     _record_step(memo, actor, MemoApprovalStep.Action.APPROVED, comment=comment)
     create_audit_log(
         actor, AuditLog.Action.APPROVE, instance=memo,
-        metadata={"transition": "approved"}, request=request,
+        metadata=_override_meta(admin_override, "approved"), request=request,
     )
     _notify_memo(memo.created_by, "MEMO_APPROVED",
                  f"Memo {memo.memo_number} was approved", memo.title, memo)
@@ -318,7 +334,9 @@ def reject_memo(memo, actor, comment, request=None):
 
     is_reviewer = memo.current_reviewer_id == actor.id and memo.status == Memo.Status.SUBMITTED
     is_approver = memo.current_approver_id == actor.id and memo.status == Memo.Status.UNDER_REVIEW
-    if not (is_reviewer or is_approver):
+    # H1: an admin may reject any submitted/under-review memo (override).
+    admin_override = _is_admin(actor) and not (is_reviewer or is_approver)
+    if not (is_reviewer or is_approver or _is_admin(actor)):
         raise ValidationError("Only the assigned reviewer or approver can reject this memo.")
 
     memo.status = Memo.Status.REJECTED
@@ -328,7 +346,7 @@ def reject_memo(memo, actor, comment, request=None):
     _record_step(memo, actor, MemoApprovalStep.Action.REJECTED, comment=comment)
     create_audit_log(
         actor, AuditLog.Action.REJECT, instance=memo,
-        metadata={"transition": "rejected", "comment": comment}, request=request,
+        metadata={**_override_meta(admin_override, "rejected"), "comment": comment}, request=request,
     )
     _notify_memo(memo.created_by, "MEMO_REJECTED",
                  f"Memo {memo.memo_number} was rejected", comment or memo.title, memo)
