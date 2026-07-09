@@ -22,6 +22,21 @@ describe('memoService', () => {
     expect(memo).toMatchObject({ id: 'm1', memo_number: 'NIFN-GEN-2026-0001' });
   });
 
+  it('createMemo with an attachment uses the service multipart path (M5)', async () => {
+    api.post.mockResolvedValue({ data: { id: 'm1' } });
+    const fd = new FormData();
+    fd.append('title', 'T');
+    fd.append('attachment', new Blob(['x']), 'f.pdf');
+    await memoService.createMemo(fd);
+    expect(api.post).toHaveBeenCalledWith('/memos/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  });
+
+  it('createAndSubmit posts to the atomic endpoint (M2)', async () => {
+    api.post.mockResolvedValue({ data: { id: 'm1', status: 'submitted' } });
+    await memoService.createAndSubmit({ title: 'T', override_reviewer_id: 'c1' });
+    expect(api.post).toHaveBeenCalledWith('/memos/create-and-submit/', { title: 'T', override_reviewer_id: 'c1' });
+  });
+
   it('submitMemo posts to the submit action with override', async () => {
     api.post.mockResolvedValue({ data: {} });
     await memoService.submitMemo('m1', { override_reviewer_id: 'c1' });

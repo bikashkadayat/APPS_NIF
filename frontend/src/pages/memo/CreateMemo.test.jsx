@@ -10,6 +10,7 @@ vi.mock('../../services/memoService', () => ({
       { id: 't1', name: 'General Announcement', memo_type: 'general', subject_template: 'Announcement: Topic', body_template: '<p>Body</p>' },
     ])),
     createMemo: vi.fn(() => Promise.resolve({ id: 'm1', memo_number: 'NIFN-GEN-2026-0001' })),
+    createAndSubmit: vi.fn(() => Promise.resolve({ id: 'm1', memo_number: 'NIFN-GEN-2026-0001', status: 'submitted' })),
     submitMemo: vi.fn(() => Promise.resolve({})),
     getAvailableCheckers: vi.fn(() => Promise.resolve([])),
   },

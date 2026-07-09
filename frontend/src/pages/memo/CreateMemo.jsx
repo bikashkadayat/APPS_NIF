@@ -2,7 +2,6 @@ import React, { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Paperclip } from 'lucide-react';
-import api from '../../services/api';
 import { memoService } from '../../services/memoService';
 import RichTextEditor from '../../components/memo/RichTextEditor';
 import UserSelector from '../../components/memo/UserSelector';
@@ -34,28 +33,26 @@ const CreateMemo = () => {
     setForm((f) => ({ ...f, memo_type: t.memo_type || f.memo_type, subject: t.subject_template || '', body: t.body_template || '' }));
   };
 
-  const createMemo = async () => {
-    if (file) {
-      const fd = new FormData();
-      Object.entries({ ...form }).forEach(([k, v]) => fd.append(k, v));
-      fd.append('attachment', file);
-      return (await api.post('/memos/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })).data;
-    }
-    return memoService.createMemo(form);
+  // Build a JSON object, or FormData when an attachment is present; the service
+  // handles both (M5). `extra` carries submit-only fields (override_reviewer_id).
+  const buildBody = (extra = {}) => {
+    const fields = { ...form, ...extra };
+    if (!file) return fields;
+    const fd = new FormData();
+    Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+    fd.append('attachment', file);
+    return fd;
   };
 
   const saveDraft = useMutation({
-    mutationFn: createMemo,
+    mutationFn: () => memoService.createMemo(buildBody()),
     onSuccess: (memo) => setCreated({ id: memo.id, memo_number: memo.memo_number }),
     onError: (e) => setError(e?.response?.data?.detail || 'Could not save memo.'),
   });
 
   const submitForReview = useMutation({
-    mutationFn: async () => {
-      const memo = await createMemo();
-      await memoService.submitMemo(memo.id, checker ? { override_reviewer_id: checker } : {});
-      return memo;
-    },
+    // Atomic create+submit (M2): a failed submit leaves no orphaned draft.
+    mutationFn: () => memoService.createAndSubmit(buildBody(checker ? { override_reviewer_id: checker } : {})),
     onSuccess: (memo) => setCreated({ id: memo.id, memo_number: memo.memo_number, submitted: true }),
     onError: (e) => setError(e?.response?.data?.detail || e?.response?.data?.override_reviewer_id?.[0] || 'Could not submit memo.'),
   });

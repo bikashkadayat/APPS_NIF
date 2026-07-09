@@ -1,6 +1,14 @@
 import api from './api';
 import { unwrapPaginated } from './utils';
 
+/** POST a memo payload, letting the browser set the multipart boundary for FormData. */
+const postMemo = (url, data) => {
+  const isForm = typeof FormData !== 'undefined' && data instanceof FormData;
+  return isForm
+    ? api.post(url, data, { headers: { 'Content-Type': 'multipart/form-data' } })
+    : api.post(url, data);
+};
+
 /**
  * Memo module service (Phase 3). Talks to /api/v1/memos/* which implements the
  * 3-level workflow (maker/any -> checker -> approver). Uses the shared axios
@@ -25,8 +33,18 @@ export const memoService = {
   /** @returns {Promise<Object>} full memo detail incl. approval_steps + can_* flags */
   getMemo: async (id) => (await api.get(`/memos/${id}/`)).data,
 
-  /** @returns {Promise<Object>} created memo (includes id + memo_number) */
-  createMemo: async (data) => (await api.post('/memos/', data)).data,
+  /**
+   * Create a draft memo. Accepts either a plain object (JSON) or a FormData
+   * (when an attachment is included) - the single code path picks the right
+   * content type (M5). @returns {Promise<Object>} created memo (id + memo_number)
+   */
+  createMemo: async (data) => (await postMemo('/memos/', data)).data,
+
+  /**
+   * Atomically create + submit a memo (M2). Same JSON/FormData handling as
+   * createMemo. If the submit fails server-side the draft is rolled back.
+   */
+  createAndSubmit: async (data) => (await postMemo('/memos/create-and-submit/', data)).data,
 
   updateMemo: async (id, data) => (await api.patch(`/memos/${id}/`, data)).data,
 
