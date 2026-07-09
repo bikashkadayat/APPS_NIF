@@ -9,6 +9,7 @@ from users.models import User
 from users.permissions import IsCheckerOrApprover
 from . import services
 from .models import Memo, MemoTemplate
+from .sanitizers import sanitize_memo_html
 from .permissions import (
     CanViewMemo,
     IsMemoApprover,
@@ -168,6 +169,32 @@ class MemoViewSet(viewsets.ModelViewSet):
         qs = User.objects.filter(role=User.Roles.APPROVER, is_active=True).order_by("first_name", "username")
         return Response(UserMiniSerializer(qs, many=True).data)
 
+    @action(detail=True, methods=["get"], url_path="attachment")
+    def attachment(self, request, pk=None):
+        """
+        Stream the memo's attachment behind authorization.
+
+        get_object() runs CanViewMemo, so only users entitled to the memo can
+        download its file (closes the unauthenticated-media hole). The file is
+        always served as an attachment (never inline) so an uploaded
+        HTML/SVG cannot execute in the app origin.
+        """
+        from django.http import FileResponse, Http404
+
+        memo = self.get_object()
+        if not memo.attachment:
+            raise Http404("This memo has no attachment.")
+        response = FileResponse(
+            memo.attachment.open("rb"),
+            as_attachment=True,
+            filename=memo.attachment.name.rsplit("/", 1)[-1],
+            # Force a generic type so the browser never renders an uploaded
+            # HTML/SVG inline in the app origin; nosniff blocks type-guessing.
+            content_type="application/octet-stream",
+        )
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
     @action(detail=True, methods=["get"], url_path="pdf")
     def pdf(self, request, pk=None):
         """Approved-memo PDF with letterhead, approval trail and verification QR."""
@@ -199,7 +226,9 @@ class MemoViewSet(viewsets.ModelViewSet):
             "to_name": _name(approver),
             "from_name": _name(author),
             "cc_name": "",
-            "body_html": linebreaks(memo.body),
+            # Defense in depth: body is sanitized on write, but re-sanitize
+            # right before rendering untrusted HTML into the PDF.
+            "body_html": linebreaks(sanitize_memo_html(memo.body)),
             "approver_name": _name(approver),
             "steps": [{
                 "step_order": s.step_order,

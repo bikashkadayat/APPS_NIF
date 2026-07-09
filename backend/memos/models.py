@@ -3,6 +3,17 @@ from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
 
+
+def memo_attachment_path(instance, filename):
+    """
+    Store uploads under an unguessable per-file UUID directory
+    (memos/attachments/YYYY/MM/<uuid>/<original-name>). Even if MEDIA were ever
+    served directly, the path cannot be guessed; downloads still go through the
+    authenticated MemoViewSet.attachment endpoint which enforces CanViewMemo.
+    """
+    return f"memos/attachments/{timezone.now():%Y/%m}/{uuid.uuid4().hex}/{filename}"
+
+
 class Memo(models.Model):
     """
     A memo document routed through a maker -> reviewer -> approver workflow.
@@ -49,7 +60,7 @@ class Memo(models.Model):
     )
     current_approver = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="memos_to_approve", db_index=True)
 
-    attachment = models.FileField(upload_to="memos/attachments/%Y/%m/", null=True, blank=True)
+    attachment = models.FileField(upload_to=memo_attachment_path, null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -1,8 +1,17 @@
 import React, { useEffect } from 'react';
+import DOMPurify from 'dompurify';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import { Bold, Italic, Heading2, Heading3, List, ListOrdered, Link as LinkIcon } from 'lucide-react';
+
+// Read-path sanitization (defense in depth; the backend also sanitizes on
+// write). Allowlist mirrors what the editor toolbar can produce.
+const PURIFY_CONFIG = {
+  ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h2', 'h3', 'ul', 'ol', 'li', 'a', 'blockquote'],
+  ALLOWED_ATTR: ['href', 'title', 'target', 'rel'],
+};
+const sanitize = (html) => DOMPurify.sanitize(html || '', PURIFY_CONFIG);
 
 /**
  * TipTap rich-text editor. Emits an HTML string via onChange (stored for future
@@ -29,7 +38,7 @@ const RichTextEditor = ({ value = '', onChange, placeholder = 'Write the memo bo
   }, [value, editor, readOnly]);
 
   if (readOnly) {
-    return <div className="lr-richtext-view" dangerouslySetInnerHTML={{ __html: value || '<p><em>No content.</em></p>' }} />;
+    return <div className="lr-richtext-view" dangerouslySetInnerHTML={{ __html: sanitize(value) || '<p><em>No content.</em></p>' }} />;
   }
 
   if (!editor) {

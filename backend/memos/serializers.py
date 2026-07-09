@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .models import Memo, MemoApprovalStep, MemoTemplate
+from .sanitizers import sanitize_memo_html
 
 User = get_user_model()
 
@@ -72,7 +73,7 @@ class MemoDetailSerializer(serializers.ModelSerializer):
             "id", "memo_number", "title", "subject", "body",
             "memo_type", "priority", "status",
             "created_by", "current_reviewer", "current_approver",
-            "attachment", "attachment_url",
+            "attachment_url",
             "created_at", "updated_at", "submitted_at", "finalized_at",
             "approval_steps",
             "can_edit", "can_submit", "can_review", "can_approve", "can_reject",
@@ -87,11 +88,13 @@ class MemoDetailSerializer(serializers.ModelSerializer):
         return user if getattr(user, "is_authenticated", False) else None
 
     def get_attachment_url(self, obj):
+        # Never expose the raw MEDIA path. Point at the authenticated download
+        # endpoint, which enforces CanViewMemo and forces a download (C2).
         if not obj.attachment:
             return None
+        path = f"/api/v1/memos/{obj.id}/attachment/"
         request = self.context.get("request")
-        url = obj.attachment.url
-        return request.build_absolute_uri(url) if request is not None else url
+        return request.build_absolute_uri(path) if request is not None else path
 
     def _is_admin(self, user):
         return user is not None and user.role == User.Roles.ADMIN
@@ -153,6 +156,15 @@ class MemoCreateSerializer(serializers.ModelSerializer):
         fields = ["id", "memo_number", "status", "title", "subject", "body",
                   "memo_type", "priority", "attachment"]
         read_only_fields = ["id", "memo_number", "status"]
+        # Accept the upload but never echo the raw MEDIA path back (C2/L4);
+        # clients read the gated attachment_url from the detail endpoint.
+        extra_kwargs = {"attachment": {"write_only": True}}
+
+    def validate_body(self, value):
+        # Sanitize the rich-text HTML on write: the body is authored by any
+        # authenticated user and later rendered to reviewers/approvers/admins
+        # and into the PDF, so it is untrusted input (stored-XSS surface).
+        return sanitize_memo_html(value)
 
     def validate_attachment(self, value):
         if value is None:
