@@ -46,6 +46,22 @@ class UserMiniSerializer(serializers.ModelSerializer):
         return obj.get_full_name() or obj.username
 
 
+class MemoAssigneeSerializer(serializers.ModelSerializer):
+    """
+    Minimal user shape for the assign-checker/approver pickers. Deliberately
+    excludes email and role (H5): the directory must not leak PII or let any
+    authenticated user enumerate the full staff roster.
+    """
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ["id", "full_name", "department"]
+
+    def get_full_name(self, obj):
+        return obj.get_full_name() or obj.username
+
+
 class MemoApprovalStepSerializer(serializers.ModelSerializer):
     """Read-only history entry for one action in the memo workflow."""
     actor = UserMiniSerializer(read_only=True)

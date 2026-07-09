@@ -3,6 +3,12 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
+
+
+class MemoDirectoryThrottle(UserRateThrottle):
+    """Per-user scoped rate limit for the assignee-directory search (H5)."""
+    scope = "memo_directory"
 
 from audit.models import AuditLog
 from users.models import User
@@ -17,12 +23,17 @@ from .permissions import (
 )
 from .serializers import (
     MemoActionSerializer,
+    MemoAssigneeSerializer,
     MemoCreateSerializer,
     MemoDetailSerializer,
     MemoListSerializer,
     MemoTemplateSerializer,
-    UserMiniSerializer,
 )
+
+# Assignee directory: require a search term and cap results so the endpoint
+# cannot be used to enumerate the whole staff roster (H5).
+DIRECTORY_MIN_QUERY = 2
+DIRECTORY_LIMIT = 20
 
 
 class MemoViewSet(viewsets.ModelViewSet):
@@ -154,19 +165,37 @@ class MemoViewSet(viewsets.ModelViewSet):
         result = services.cancel_memo(memo, request.user, comment, request=request)
         return self._detail_response(result)
 
+    def _directory(self, request, role):
+        """
+        Search-gated, capped, PII-free assignee lookup (H5). Returns [] until at
+        least DIRECTORY_MIN_QUERY chars are supplied, matches on name/username
+        only (never email), and returns at most DIRECTORY_LIMIT rows.
+        """
+        query = (request.query_params.get("search") or "").strip()
+        if len(query) < DIRECTORY_MIN_QUERY:
+            return Response([])
+        qs = (
+            User.objects.filter(role=role, is_active=True)
+            .filter(
+                Q(first_name__icontains=query)
+                | Q(last_name__icontains=query)
+                | Q(username__icontains=query)
+            )
+            .order_by("first_name", "username")[:DIRECTORY_LIMIT]
+        )
+        return Response(MemoAssigneeSerializer(qs, many=True).data)
+
     @action(detail=False, methods=["get"], url_path="available-checkers",
-            permission_classes=[IsAuthenticated])
+            permission_classes=[IsAuthenticated], throttle_classes=[MemoDirectoryThrottle])
     def available_checkers(self, request):
         """Active checkers for the maker's optional 'assign checker' dropdown."""
-        qs = User.objects.filter(role=User.Roles.CHECKER, is_active=True).order_by("first_name", "username")
-        return Response(UserMiniSerializer(qs, many=True).data)
+        return self._directory(request, User.Roles.CHECKER)
 
     @action(detail=False, methods=["get"], url_path="available-approvers",
-            permission_classes=[IsAuthenticated])
+            permission_classes=[IsAuthenticated], throttle_classes=[MemoDirectoryThrottle])
     def available_approvers(self, request):
         """Active approvers for the checker's optional 'assign approver' dropdown."""
-        qs = User.objects.filter(role=User.Roles.APPROVER, is_active=True).order_by("first_name", "username")
-        return Response(UserMiniSerializer(qs, many=True).data)
+        return self._directory(request, User.Roles.APPROVER)
 
     @action(detail=True, methods=["get"], url_path="attachment")
     def attachment(self, request, pk=None):

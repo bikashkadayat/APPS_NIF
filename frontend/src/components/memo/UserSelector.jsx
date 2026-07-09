@@ -1,10 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { memoService } from '../../services/memoService';
 
+const MIN_QUERY = 2; // server rejects shorter queries (H5)
+
 /**
  * Dropdown to pick a checker/approver, with an optional "Auto-assign" choice.
- * Fetches the active users once and filters client-side (lists are small).
+ * Results are fetched from the server per search term (min 2 chars) rather than
+ * loading the whole roster, so the directory cannot be enumerated (H5).
  *
  * @param {{ role:'checker'|'approver', value:string, onChange:(id:string)=>void,
  *           allowAuto?:boolean }} props  value '' means auto-assign.
@@ -12,22 +15,22 @@ import { memoService } from '../../services/memoService';
 const UserSelector = ({ role, value, onChange, allowAuto = true }) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const query = search.trim();
+  const enabled = query.length >= MIN_QUERY;
 
   const { data: users = [], isLoading } = useQuery({
-    queryKey: ['memo-assignees', role],
-    queryFn: () => (role === 'approver' ? memoService.getAvailableApprovers() : memoService.getAvailableCheckers()),
-    staleTime: 60_000,
+    queryKey: ['memo-assignees', role, query],
+    queryFn: () => (role === 'approver'
+      ? memoService.getAvailableApprovers(query)
+      : memoService.getAvailableCheckers(query)),
+    enabled,
+    staleTime: 30_000,
   });
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) =>
-      (u.full_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
-  }, [users, search]);
+  const filtered = users;
 
   const selected = users.find((u) => String(u.id) === String(value));
-  const label = value ? (selected ? `${selected.full_name} (${selected.email})` : 'Selected user')
+  const label = value ? (selected ? selected.full_name : 'Selected user')
     : (allowAuto ? 'Auto-assign by department' : 'Select…');
 
   const pick = (id) => { onChange(id); setOpen(false); setSearch(''); };
@@ -48,13 +51,14 @@ const UserSelector = ({ role, value, onChange, allowAuto = true }) => {
               <b>Auto-assign by department</b>
             </button>
           )}
-          {isLoading && <div className="lr-userselect-empty">Loading…</div>}
-          {!isLoading && filtered.length === 0 && <div className="lr-userselect-empty">No active {role}s found.</div>}
+          {!enabled && <div className="lr-userselect-empty">Type at least {MIN_QUERY} characters to search {role}s.</div>}
+          {enabled && isLoading && <div className="lr-userselect-empty">Loading…</div>}
+          {enabled && !isLoading && filtered.length === 0 && <div className="lr-userselect-empty">No matching {role}s.</div>}
           {filtered.map((u) => (
             <button key={u.id} type="button" role="option" aria-selected={String(u.id) === String(value)}
               className={`lr-userselect-opt ${String(u.id) === String(value) ? 'on' : ''}`} onClick={() => pick(String(u.id))}>
               <div>{u.full_name}</div>
-              <div className="lr-userselect-sub">{u.email}{u.department ? ` · ${u.department}` : ''}</div>
+              {u.department && <div className="lr-userselect-sub">{u.department}</div>}
             </button>
           ))}
         </div>

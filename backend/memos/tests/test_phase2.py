@@ -80,21 +80,23 @@ def test_submit_with_inactive_checker_returns_400(api, maker, checker):
     assert resp.status_code == 400
 
 
-# --- available-* dropdown endpoints ----------------------------------------
+# --- available-* dropdown endpoints (H5: search-gated) ----------------------
 @pytest.mark.django_db
 def test_available_checkers_endpoint_returns_only_checkers(api, maker, checker, other_checker, approver):
     api.force_authenticate(maker)
-    resp = api.get("/api/v1/memos/available-checkers/")
+    # Fixtures name checkers "Checker1"/"Checker2"; search hits both, not approver.
+    resp = api.get("/api/v1/memos/available-checkers/", {"search": "checker"})
     assert resp.status_code == 200
-    assert {u["role"] for u in resp.data} == {"checker"}
     ids = {str(u["id"]) for u in resp.data}
     assert str(checker.id) in ids and str(other_checker.id) in ids
+    assert str(approver.id) not in ids
 
 
 @pytest.mark.django_db
 def test_available_approvers_endpoint_returns_only_approvers(api, maker, approver, checker):
     api.force_authenticate(maker)
-    resp = api.get("/api/v1/memos/available-approvers/")
+    resp = api.get("/api/v1/memos/available-approvers/", {"search": "approver"})
     assert resp.status_code == 200
-    assert {u["role"] for u in resp.data} == {"approver"}
-    assert str(approver.id) in {str(u["id"]) for u in resp.data}
+    ids = {str(u["id"]) for u in resp.data}
+    assert str(approver.id) in ids
+    assert str(checker.id) not in ids

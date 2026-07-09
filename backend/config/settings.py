@@ -125,6 +125,10 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Assignee-directory search (H5). Global anon/user rates added in H6.
+        'memo_directory': '30/min',
+    },
 }
 
 SIMPLE_JWT = {
