@@ -95,7 +95,13 @@ def _notify_memo(recipient, category, title, body, memo):
         from notifications.dispatcher import notify
         notify(recipient, category, title, body, action_url=f"/memos/{memo.id}")
     except Exception:  # noqa: BLE001 - notifications must not fail the workflow
-        logger.warning("memo notification failed", exc_info=True)
+        # L3: log at ERROR with enough context to alert/monitor on. The
+        # transition still succeeds; only the (best-effort) notify failed.
+        logger.error(
+            "memo notification failed memo=%s category=%s recipient=%s",
+            memo.memo_number, category, getattr(recipient, "id", None),
+            exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------

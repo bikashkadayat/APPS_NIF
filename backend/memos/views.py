@@ -313,8 +313,23 @@ class MemoViewSet(viewsets.ModelViewSet):
         return response
 
 
-class MemoTemplateViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only access to active templates for prefilling new memos."""
-    permission_classes = [IsAuthenticated]
+class MemoTemplateViewSet(viewsets.ModelViewSet):
+    """
+    Memo templates. Any authenticated user may read active templates to prefill
+    a new memo; create/update/delete are admin-only (L1).
+    """
     serializer_class = MemoTemplateSerializer
-    queryset = MemoTemplate.objects.filter(is_active=True)
+
+    def get_permissions(self):
+        from users.admin_views import IsAdminOrSuperuser
+        if self.action in ("list", "retrieve"):
+            return [IsAuthenticated()]
+        return [IsAdminOrSuperuser()]
+
+    def get_queryset(self):
+        # Admins manage all templates (incl. inactive); everyone else sees only
+        # active ones for the prefill dropdown.
+        user = self.request.user
+        if getattr(user, "role", None) == User.Roles.ADMIN or user.is_staff or user.is_superuser:
+            return MemoTemplate.objects.all()
+        return MemoTemplate.objects.filter(is_active=True)
