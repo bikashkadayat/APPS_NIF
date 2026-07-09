@@ -1,12 +1,35 @@
 import os
+import sys
 from pathlib import Path
 from datetime import timedelta
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-nif-portal-secret-key')
-DEBUG = os.getenv('DJANGO_DEBUG', 'True').lower() in ('true', '1', 'yes')
-ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', '*').split(',')
+# H6: fail-closed, prod-safe defaults. DEBUG must be explicitly opted in; the
+# insecure fallbacks below are only tolerated in DEBUG or under the test runner,
+# and the boot guards refuse to start a real production process configured
+# insecurely.
+DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() in ('true', '1', 'yes')
+_RUNNING_TESTS = 'pytest' in sys.modules or 'test' in sys.argv
+_ALLOW_INSECURE = DEBUG or _RUNNING_TESTS
+
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    if _ALLOW_INSECURE:
+        SECRET_KEY = 'django-insecure-nif-portal-secret-key'  # dev / test only
+    else:
+        raise ImproperlyConfigured(
+            'DJANGO_SECRET_KEY must be set when DEBUG is off.'
+        )
+
+_default_hosts = '*' if _ALLOW_INSECURE else ''
+ALLOWED_HOSTS = [h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS', _default_hosts).split(',') if h.strip()]
+if not _ALLOW_INSECURE and (not ALLOWED_HOSTS or '*' in ALLOWED_HOSTS):
+    raise ImproperlyConfigured(
+        'DJANGO_ALLOWED_HOSTS must be an explicit host list (no "*") when DEBUG is off.'
+    )
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -111,12 +134,18 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 'yes')
+# H6: do not allow all CORS origins in production unless explicitly opted in.
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True' if DEBUG else 'False').lower() in ('true', '1', 'yes')
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://localhost:8000').split(',')
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    # H6: fail closed - every endpoint requires auth unless it explicitly opts
+    # out with permission_classes = [AllowAny] (health, login, refresh).
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_PAGINATION_CLASS': 'config.pagination.StandardResultsSetPagination',
     'PAGE_SIZE': 50,
@@ -125,9 +154,14 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
     'DEFAULT_THROTTLE_RATES': {
-        # Assignee-directory search (H5). Global anon/user rates added in H6.
-        'memo_directory': '30/min',
+        'anon': '20/min',
+        'user': '200/min',
+        'memo_directory': '30/min',  # assignee-directory search (H5)
     },
 }
 

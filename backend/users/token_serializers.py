@@ -28,6 +28,8 @@ class SafeTokenRefreshView(TokenRefreshView):
     the frontend receives a clean 401 and can redirect to login.
     """
 
+    permission_classes = [AllowAny]  # H6: explicitly public (token is the credential)
+
     def post(self, request, *args, **kwargs):
         refresh = request.data.get("refresh")
         if refresh:
