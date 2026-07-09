@@ -188,9 +188,11 @@ def resolve_next_approver(memo):
         or memo.priority in ESCALATION_PRIORITIES
     )
     if escalate:
+        # M4: deterministic pick (oldest admin, id tie-break) so escalation
+        # routing is reproducible rather than depending on default ordering.
         senior = User.objects.filter(
             role=User.Roles.ADMIN, is_active=True
-        ).first()
+        ).order_by("date_joined", "id").first()
         if senior:
             return senior
 
