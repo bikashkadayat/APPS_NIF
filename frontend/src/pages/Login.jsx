@@ -78,69 +78,59 @@ const Login = () => {
         </div>
       )}
 
-      <div className="login-grid">
-        <section className="login-hero">
-          <img src="/NIF.png" alt="NIF Logo" className="login-brand" />
-          <div className="login-hero-copy">
-            <p className="login-badge">Nepal Internet Foundation</p>
-            <h1>NIF Leave &amp; Memo Portal</h1>
-            <p className="login-subtitle">Manage leaves and memos with ease</p>
+      <main className="auth-card" role="main">
+        <div className="auth-brand">
+          <img src="/NIF.png" alt="Nepal Internet Foundation" className="auth-logo" width="240" height="96" />
+          <h1 className="auth-title">Office Leave &amp; Memo Management System</h1>
+          <p className="auth-tagline">Secure internal workspace</p>
+        </div>
+
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <div className="auth-field">
+            <label htmlFor="login-email">Email</label>
+            <input
+              id="login-email"
+              name="email"
+              type="email"
+              value={formValues.email}
+              onChange={handleChange}
+              required
+              placeholder="you@nif.org.np"
+              autoComplete="username"
+              autoFocus
+            />
           </div>
 
-          <div className="login-features">
-            <div className="feature-item"><span>•</span><div><strong>One login, every role</strong><p>Makers, checkers, approvers and admins sign in here.</p></div></div>
-            <div className="feature-item"><span>•</span><div><strong>Secure sign in</strong><p>JWT-based authentication with role-aware access.</p></div></div>
-            <div className="feature-item"><span>•</span><div><strong>Unified workspace</strong><p>Apply, review and approve from one portal.</p></div></div>
-          </div>
-        </section>
-
-        <section className="login-card">
-          <div className="login-card-header">
-            <div>
-              <div className="login-eyebrow">Welcome back</div>
-              <h2>Sign in to your account</h2>
+          <div className="auth-field">
+            <label htmlFor="login-password">Password</label>
+            <div className="password-input-wrapper">
+              <input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                name="password"
+                value={formValues.password}
+                onChange={handleChange}
+                required
+                placeholder="Enter your password"
+                autoComplete="current-password"
+              />
+              <button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}>
+                {showPassword ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                )}
+              </button>
             </div>
-            <div className="login-status">Role friendly, secure access</div>
           </div>
 
-          <form className="login-form" onSubmit={handleSubmit}>
-            <div className="login-group">
-              <label>Email</label>
-              <input name="email" type="email" value={formValues.email} onChange={handleChange} required placeholder="Enter your email" autoComplete="username" />
-            </div>
+          <button type="submit" className="btn btn-primary auth-submit" disabled={loading}>
+            {loading ? 'Signing in…' : 'Sign In'}
+          </button>
+        </form>
 
-            <div className="login-group">
-              <label>Password</label>
-              <div className="password-input-wrapper">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  name="password"
-                  value={formValues.password}
-                  onChange={handleChange}
-                  required
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                />
-                <button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} tabIndex={-1} aria-label={showPassword ? 'Hide password' : 'Show password'}>
-                  {showPassword ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign In'}
-            </button>
-          </form>
-
-          <div className="login-help">
-            <p style={{ color: 'var(--text-muted)' }}>New here? Contact your administrator for account access.</p>
-          </div>
-        </section>
-      </div>
+        <p className="auth-help">Forgot your password? Contact your administrator.</p>
+      </main>
     </div>
   );
 };

@@ -6,6 +6,8 @@ leave); the defect was a frontend pagination-unwrap. These tests lock in the
 backend contract the frontend now relies on: a submitted leave is present in the
 approver's paginated /leaves/ response with count > 0.
 """
+from datetime import date
+
 import pytest
 from rest_framework.test import APIClient
 
@@ -14,13 +16,15 @@ from users.models import User
 
 @pytest.fixture
 def e2e_users(db):
+    # Permanent + tenured so the category engine grants a non-zero Annual balance.
+    common = dict(employment_type=User.EmploymentType.PERMANENT, date_of_joining=date(2018, 1, 1))
     maker = User.objects.create_user(
         username="e2e_maker", email="e2e_maker@nif.test", password="pass12345",
-        first_name="E2E", last_name="Maker", role=User.Roles.MAKER, department="ENG",
+        first_name="E2E", last_name="Maker", role=User.Roles.MAKER, department="ENG", **common,
     )
     approver = User.objects.create_user(
         username="e2e_approver", email="e2e_approver@nif.test", password="pass12345",
-        role=User.Roles.APPROVER, department="ENG",
+        role=User.Roles.APPROVER, department="ENG", **common,
     )
     return maker, approver
 

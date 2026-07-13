@@ -1,0 +1,7 @@
+# Development / CI dependencies (base runtime + test tooling).
+#   pip install -r requirements/development.txt
+-r base.txt
+
+# Test suite
+pytest==9.1.1
+pytest-django==4.12.0

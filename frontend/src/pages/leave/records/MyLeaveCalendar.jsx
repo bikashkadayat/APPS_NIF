@@ -8,7 +8,8 @@ import { Skeleton, ErrorState } from '../../../components/leave-records/States';
 
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const toISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const isWeekend = (d) => d.getDay() === 0 || d.getDay() === 6;
+// Nepal's weekly holiday is Saturday only (Sunday is a working day).
+const isWeekend = (d) => d.getDay() === 6;
 
 /** Monday-aligned grid of 42 days covering the given month. */
 const buildGrid = (year, month) => {
@@ -94,7 +95,7 @@ const MyLeaveCalendar = () => {
           </div>
 
           <div className="lr-cal-grid" role="grid" aria-label={`Leave calendar for ${monthName(cursor.month + 1)} ${cursor.year}`}>
-            {DOW.map((d) => <div key={d} className="lr-cal-dow" role="columnheader">{d}</div>)}
+            {DOW.map((d) => <div key={d} className={`lr-cal-dow ${d === 'Sat' ? 'is-saturday' : ''}`} role="columnheader">{d}</div>)}
             {grid.map((d) => {
               const iso = toISO(d);
               return (

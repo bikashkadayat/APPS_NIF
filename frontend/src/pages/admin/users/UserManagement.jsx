@@ -4,36 +4,101 @@ import { userMgmtService } from '../../../services/userMgmtService';
 import ConfirmModal from '../../../components/admin/ConfirmModal';
 import Toast from '../../../components/admin/Toast';
 import { Skeleton, EmptyState, ErrorState } from '../../../components/leave-records/States';
+import { ROLES, ROLE_LABELS, roleLabel, EMPLOYEE_TYPES, employeeTypeLabel,
+  EMPLOYMENT_TYPES, GENDERS } from '../../../services/roles';
 
-const ROLES = ['maker', 'checker', 'approver', 'admin'];
-const emptyCreate = { full_name: '', email: '', role: 'maker', department: '', designation: '', phone: '', date_of_joining: '', password: '' };
+const emptyCreate = {
+  full_name: '', email: '', role: 'maker', employee_type: 'employee',
+  employment_type: 'permanent', gender: 'undisclosed', department_ref: '',
+  designation: '', phone: '', date_of_joining: '', is_active: 'true', password: '',
+};
+
+// Client-side preview of the leave category (mirrors leaves.category_engine) so
+// the form shows the resolved tier before saving. The backend is authoritative.
+const monthsOfService = (isoDate) => {
+  if (!isoDate) return null;
+  const d = new Date(isoDate), t = new Date();
+  let m = (t.getFullYear() - d.getFullYear()) * 12 + (t.getMonth() - d.getMonth());
+  if (t.getDate() < d.getDate()) m -= 1;
+  return Math.max(0, m);
+};
+const previewCategory = (etype, doj) => {
+  const m = monthsOfService(doj);
+  if (etype === 'intern' || etype === 'volunteer') return 'Category D — Intern / Volunteer';
+  if (m === null) return 'Probation floor — no joining date (HR to confirm)';
+  if (etype === 'permanent') return m > 36 ? 'Category A — Permanent (>3 yrs)' : m > 12 ? 'Category B — Permanent (1–3 yrs)' : 'Category C — Permanent (<1 yr)';
+  if (etype === 'post_probation') return m > 12 ? 'Category B — auto-treated as Permanent (flag)' : m >= 3 ? 'Category C — Post-Probation' : 'Probation (<3 mo) — flag';
+  if (etype === 'probation') return m >= 3 ? 'Category C — probation completed (flag)' : 'Probation (<3 mo)';
+  return 'Probation floor — HR review';
+};
 
 const CreateUserModal = ({ busy, onClose, onSubmit }) => {
   const [form, setForm] = useState(emptyCreate);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const valid = form.full_name.trim() && /.+@.+\..+/.test(form.email);
+  const { data: departments = [] } = useQuery({
+    queryKey: ['admin-departments'],
+    queryFn: () => userMgmtService.departments(),
+  });
+  const valid = form.full_name.trim() && /.+@.+\..+/.test(form.email) && form.department_ref;
   const submit = () => {
     const [first, ...rest] = form.full_name.trim().split(' ');
     onSubmit({
       email: form.email, first_name: first, last_name: rest.join(' '),
-      role: form.role, department: form.department || null, designation: form.designation || null,
+      role: form.role, employee_type: form.employee_type,
+      employment_type: form.employment_type, gender: form.gender,
+      department_ref: form.department_ref || null, designation: form.designation || null,
       phone: form.phone || null, date_of_joining: form.date_of_joining || null,
+      is_active: form.is_active === 'true',
       ...(form.password ? { password: form.password } : {}),
     });
   };
   return (
     <div className="lr-modal-overlay" role="dialog" aria-modal="true" aria-label="Create employee" onClick={onClose}>
-      <div className="lr-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="lr-modal" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <div className="lr-modal-head"><h3>Create employee</h3><button type="button" className="lr-modal-close" aria-label="Close" onClick={onClose}>×</button></div>
-        <label className="lr-field"><span>Full name</span><input value={form.full_name} onChange={set('full_name')} aria-label="Full name" /></label>
-        <label className="lr-field"><span>Email</span><input type="email" value={form.email} onChange={set('email')} aria-label="Email" /></label>
-        <label className="lr-field"><span>Role</span>
-          <select value={form.role} onChange={set('role')} aria-label="Role">{ROLES.map((r) => <option key={r} value={r}>{r}</option>)}</select>
-        </label>
-        <label className="lr-field"><span>Department (code or name)</span><input value={form.department} onChange={set('department')} aria-label="Department" /></label>
-        <label className="lr-field"><span>Designation</span><input value={form.designation} onChange={set('designation')} aria-label="Designation" /></label>
+        <label className="lr-field"><span>Employee ID</span><input value="Auto-generated on save" disabled readOnly aria-label="Employee ID" /></label>
+        <label className="lr-field"><span>Full name *</span><input value={form.full_name} onChange={set('full_name')} aria-label="Full name" /></label>
+        <label className="lr-field"><span>Email *</span><input type="email" value={form.email} onChange={set('email')} aria-label="Email" /></label>
         <label className="lr-field"><span>Phone</span><input value={form.phone} onChange={set('phone')} aria-label="Phone" /></label>
+        <label className="lr-field"><span>Department *</span>
+          <select value={form.department_ref} onChange={set('department_ref')} aria-label="Department">
+            <option value="">Select department…</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </label>
+        <label className="lr-field"><span>Designation</span><input value={form.designation} onChange={set('designation')} aria-label="Designation" /></label>
+        <label className="lr-field"><span>Employee Type *</span>
+          <select value={form.employee_type} onChange={set('employee_type')} aria-label="Employee type">
+            {EMPLOYEE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </label>
+        <label className="lr-field"><span>Role *</span>
+          <select value={form.role} onChange={set('role')} aria-label="Role">{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</select>
+        </label>
+        <label className="lr-field"><span>Employment Type *</span>
+          <select value={form.employment_type} onChange={set('employment_type')} aria-label="Employment type">
+            {EMPLOYMENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </label>
         <label className="lr-field"><span>Date of joining</span><input type="date" value={form.date_of_joining} onChange={set('date_of_joining')} aria-label="Date of joining" /></label>
+        <label className="lr-field"><span>Gender</span>
+          <select value={form.gender} onChange={set('gender')} aria-label="Gender">
+            {GENDERS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+          </select>
+        </label>
+        <div className="lr-field"><span>Leave Category</span>
+          <div style={{ padding: '8px 10px', background: 'var(--bg-main, #f5f6f8)', borderRadius: 6, fontSize: 13, fontWeight: 600 }}
+               aria-label="Computed leave category">
+            {previewCategory(form.employment_type, form.date_of_joining)}
+          </div>
+          <small style={{ color: 'var(--text-muted)' }}>Auto-computed from employment type + service. Balances assign on save.</small>
+        </div>
+        <label className="lr-field"><span>Status</span>
+          <select value={form.is_active} onChange={set('is_active')} aria-label="Status">
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </label>
         <label className="lr-field"><span>Password (blank = auto-generate)</span><input value={form.password} onChange={set('password')} aria-label="Password" /></label>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
           <button type="button" className="lr-btn lr-btn-ghost" onClick={onClose}>Cancel</button>
@@ -112,7 +177,7 @@ const UserManagement = () => {
       <div className="lr-filter-bar">
         <input type="search" placeholder="Search name / email / employee id" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search users" />
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} aria-label="Filter by role">
-          <option value="">All roles</option>{ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+          <option value="">All roles</option>{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
         </select>
       </div>
 
@@ -123,19 +188,25 @@ const UserManagement = () => {
       {!isLoading && !isError && users.length > 0 && (
         <div className="lr-table-wrap">
           <table className="lr-table">
-            <thead><tr><th scope="col">Employee</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+            <thead><tr><th scope="col">Employee</th><th scope="col">Department</th><th scope="col">Designation</th><th scope="col">Type</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
-                  <td><div style={{ fontWeight: 600 }}>{u.full_name}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{u.employee_id || '—'}</div></td>
-                  <td>{u.email}</td>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{u.full_name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{u.employee_id || '—'}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{u.email}</div>
+                  </td>
+                  <td>{u.department_name || '—'}</td>
+                  <td>{u.designation || '—'}</td>
+                  <td>{employeeTypeLabel(u.employee_type)}</td>
                   <td>
                     <select value={u.role} aria-label={`Role for ${u.email}`} onChange={(e) => setConfirm({ type: 'role', user: u, role: e.target.value })}
-                      style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', fontSize: 12, textTransform: 'capitalize' }}>
-                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                      style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', fontSize: 12 }}>
+                      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                     </select>
                   </td>
-                  <td>{u.is_active ? 'Active' : 'Inactive'}</td>
+                  <td><span className={`ar-tl-status ${u.is_active ? 'ar-tl-approved' : ''}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
                   <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button type="button" className="lr-btn lr-btn-ghost" onClick={() => setConfirm({ type: 'reset', user: u })}>Reset PW</button>
                     {u.is_active
@@ -161,7 +232,7 @@ const UserManagement = () => {
             reset: `Generate a new temporary password for ${confirm.user.email}? They must change it on next login.`,
             deactivate: `Deactivate ${confirm.user.email}? They will be blocked at login.`,
             activate: `Reactivate ${confirm.user.email}?`,
-            role: `Change ${confirm.user.email}'s role to "${confirm.role}"?`,
+            role: `Change ${confirm.user.email}'s role to "${roleLabel(confirm.role)}"?`,
           }[confirm.type]}
           danger={confirm.type === 'deactivate'}
           confirmLabel="Confirm"

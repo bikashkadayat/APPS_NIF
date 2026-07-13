@@ -3,8 +3,19 @@ Hi {{ recipient_name }},
 {{ title }}
 
 {{ body }}
-{% if action_url %}
+{% if employee_name %}
+Employee:     {{ employee_name }}{% if department %}
+Department:   {{ department }}{% endif %}
+Leave type:   {{ leave_type }}
+Start:        {{ start_bs }} BS / {{ start_ad }}
+End:          {{ end_bs }} BS / {{ end_ad }}
+Working days: {{ working_days }}{% if reason %}
+Reason:       {{ reason }}{% endif %}{% if actor_line %}
+Action:       {{ actor_line }}{% endif %}{% if remarks %}
+Remarks:      {{ remarks }}{% endif %}
+{% endif %}{% if action_url %}
 View in portal: {{ action_url }}
 {% endif %}
 --
-NIF Portal. Manage preferences / unsubscribe: {{ unsubscribe_url }}
+This is an automated message from the NIF Leave & Memo Portal.
+Manage preferences / unsubscribe: {{ unsubscribe_url }}

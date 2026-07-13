@@ -40,7 +40,7 @@ class UserMiniSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "full_name", "email", "role", "department"]
+        fields = ["id", "full_name", "email", "role", "department", "employee_id"]
 
     def get_full_name(self, obj):
         return obj.get_full_name() or obj.username
@@ -62,14 +62,27 @@ class MemoAssigneeSerializer(serializers.ModelSerializer):
         return obj.get_full_name() or obj.username
 
 
+def memo_status_label(obj):
+    """Business label for a memo status: the terminal 'approved' reads as
+    'Published' (spec), everything else uses the normal display name."""
+    if obj.status == Memo.Status.APPROVED:
+        return "Published"
+    return obj.get_status_display()
+
+
 class MemoApprovalStepSerializer(serializers.ModelSerializer):
     """Read-only history entry for one action in the memo workflow."""
     actor = UserMiniSerializer(read_only=True)
+    acted_at_bs = serializers.SerializerMethodField()
 
     class Meta:
         model = MemoApprovalStep
-        fields = ["id", "step_order", "actor", "action", "comment", "acted_at"]
+        fields = ["id", "step_order", "actor", "action", "comment", "acted_at", "acted_at_bs"]
         read_only_fields = fields
+
+    def get_acted_at_bs(self, obj):
+        from config.nepali_dates import to_bs
+        return to_bs(obj.acted_at)
 
 
 class MemoListSerializer(serializers.ModelSerializer):
@@ -77,15 +90,19 @@ class MemoListSerializer(serializers.ModelSerializer):
     created_by = UserMiniSerializer(read_only=True)
     current_reviewer = UserMiniSerializer(read_only=True)
     current_approver = UserMiniSerializer(read_only=True)
+    status_label = serializers.SerializerMethodField()
 
     class Meta:
         model = Memo
         fields = [
-            "id", "memo_number", "title", "memo_type", "priority", "status",
+            "id", "memo_number", "title", "memo_type", "priority", "status", "status_label",
             "created_by", "current_reviewer", "current_approver",
             "created_at", "submitted_at",
         ]
         read_only_fields = fields
+
+    def get_status_label(self, obj):
+        return memo_status_label(obj)
 
 
 class MemoDetailSerializer(serializers.ModelSerializer):
@@ -95,6 +112,8 @@ class MemoDetailSerializer(serializers.ModelSerializer):
     current_approver = UserMiniSerializer(read_only=True)
     approval_steps = MemoApprovalStepSerializer(many=True, read_only=True)
     attachment_url = serializers.SerializerMethodField()
+    status_label = serializers.SerializerMethodField()
+    created_at_bs = serializers.SerializerMethodField()
 
     can_edit = serializers.SerializerMethodField()
     can_submit = serializers.SerializerMethodField()
@@ -106,14 +125,21 @@ class MemoDetailSerializer(serializers.ModelSerializer):
         model = Memo
         fields = [
             "id", "memo_number", "title", "subject", "body",
-            "memo_type", "priority", "status",
+            "memo_type", "priority", "status", "status_label",
             "created_by", "current_reviewer", "current_approver",
             "attachment_url",
-            "created_at", "updated_at", "submitted_at", "finalized_at",
+            "created_at", "created_at_bs", "updated_at", "submitted_at", "finalized_at",
             "approval_steps",
             "can_edit", "can_submit", "can_review", "can_approve", "can_reject",
         ]
         read_only_fields = fields
+
+    def get_status_label(self, obj):
+        return memo_status_label(obj)
+
+    def get_created_at_bs(self, obj):
+        from config.nepali_dates import to_bs
+        return to_bs(obj.created_at)
 
     def _request_user(self):
         request = self.context.get("request")

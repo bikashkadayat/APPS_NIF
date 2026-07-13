@@ -49,10 +49,10 @@ export const useLeaves = () => {
     }
   };
 
-  const updateLeaveStatus = async (id, status) => {
+  const updateLeaveStatus = async (id, status, remarks = '') => {
     setLoading(true);
     try {
-      const response = await leaveService.updateStatus(id, status);
+      const response = await leaveService.updateStatus(id, status, remarks);
       await fetchLeaves();
       return response.data;
     } catch (err) {

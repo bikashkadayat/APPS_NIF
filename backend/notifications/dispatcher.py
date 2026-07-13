@@ -21,7 +21,13 @@ def get_preference(user, category):
     return NotificationPreference(user=user, category=category, in_app_enabled=True, email_enabled=email_default)
 
 
-def notify(user, category, title, body="", action_url="", idempotency_key=None):
+def notify(user, category, title, body="", action_url="", idempotency_key=None,
+           email_context=None, object_id=""):
+    """
+    email_context: optional dict merged into the HTML email template context
+    (e.g. structured leave detail: status badge, BS+AD dates, days, remarks).
+    object_id: source-object reference (e.g. leave UUID) recorded in NotificationLog.
+    """
     if user is None or not getattr(user, "is_active", True):
         return None
 
@@ -35,7 +41,7 @@ def notify(user, category, title, body="", action_url="", idempotency_key=None):
                 defaults={"category": category, "title": title, "body": body, "action_url": action_url or ""},
             )
             if not created:
-                return notif  # already delivered; do not re-send email either
+                return notif  # already delivered; do not re-send email either (dedup)
         else:
             notif = Notification.objects.create(
                 recipient=user, category=category, title=title, body=body, action_url=action_url or "",
@@ -46,6 +52,7 @@ def notify(user, category, title, body="", action_url="", idempotency_key=None):
             # Optimistically flag in the main thread so the email worker never
             # needs a DB connection (avoids sqlite lock contention under tests).
             Notification.objects.filter(pk=notif.pk).update(is_email_sent=True)
-        emails.dispatch_email(user, category, title, body, action_url or "")
+        emails.dispatch_email(user, category, title, body, action_url or "",
+                              extra=email_context, object_id=object_id)
 
     return notif

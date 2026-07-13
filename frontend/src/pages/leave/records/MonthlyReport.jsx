@@ -8,10 +8,21 @@ import AttendanceIndicator from '../../../components/leave-records/AttendanceInd
 import LeaveTypeChip from '../../../components/leave-records/LeaveTypeChip';
 import YearSelector from '../../../components/leave-records/YearSelector';
 import { Skeleton, EmptyState, ErrorState } from '../../../components/leave-records/States';
+import { FileDown, Loader } from 'lucide-react';
+import { leaveRecordService } from '../../../services/leaveRecordService';
+import { saveBlob } from '../../../services/reportService';
 
 const MonthlyReport = () => {
   const [year, setYear] = useState(new Date().getFullYear());
+  const [pdfBusy, setPdfBusy] = useState(false);
   const { data = [], isLoading, isError, error, refetch } = useMonthlySummaries(year);
+
+  const downloadPdf = async () => {
+    setPdfBusy(true);
+    try {
+      saveBlob(await leaveRecordService.reportPdf('monthly', year), `monthly-leave-report-${year}`);
+    } catch { /* request failed; button re-enables */ } finally { setPdfBusy(false); }
+  };
   const { data: leaveTypes = [] } = useLeaveTypes();
 
   const rows = [...data].sort((a, b) => a.month - b.month);
@@ -41,7 +52,12 @@ const MonthlyReport = () => {
           <h2>Monthly Report</h2>
           <div className="lr-page-sub">Leave days by type and attendance per month</div>
         </div>
-        <YearSelector currentYear={year} onChange={setYear} minYear={2023} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <YearSelector currentYear={year} onChange={setYear} minYear={2023} />
+          <button className="btn btn-primary" onClick={downloadPdf} disabled={pdfBusy || rows.length === 0}>
+            {pdfBusy ? <Loader size={16} className="lr-spin" /> : <FileDown size={16} />} Download PDF
+          </button>
+        </div>
       </div>
 
       {isLoading && <Skeleton rows={2} />}
@@ -101,7 +117,6 @@ const MonthlyReport = () => {
               </tbody>
             </table>
           </div>
-          <p className="lr-page-sub" style={{ marginTop: 12 }}>Download (PDF/CSV) arrives in Phase 8.</p>
         </>
       )}
     </div>

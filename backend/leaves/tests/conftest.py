@@ -11,10 +11,19 @@ MONDAY = date.fromisocalendar(2026, 24, 1)
 YEAR = 2026
 
 
-def _user(username, role, department="ENG"):
+def _user(username, role, department="ENG", **extra):
+    # Default to a long-tenured permanent employee so the category engine resolves
+    # Category A (Annual 12 / Sick 12) - gives tests a non-zero entitlement to work
+    # with. Individual tests can override employment_type / date_of_joining.
+    defaults = dict(
+        employment_type=User.EmploymentType.PERMANENT,
+        date_of_joining=date(2018, 1, 1),
+    )
+    defaults.update(extra)
     return User.objects.create_user(
         username=username, email=f"{username}@nif.test", password="pass12345",
         first_name=username.capitalize(), last_name="T", role=role, department=department,
+        **defaults,
     )
 
 

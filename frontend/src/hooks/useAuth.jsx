@@ -96,13 +96,24 @@ export const AuthProvider = ({ children }) => {
     setUser((prev) => (prev ? { ...prev, must_change_password: false } : prev));
   };
 
-  const logout = () => {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
+  const logout = async () => {
+    // Flip UI state immediately so the app treats the user as logged out at once.
+    const refresh = localStorage.getItem('refreshToken');
     setUser(null);
     setRole(null);
     setIsAuthenticated(false);
     setMustChangePassword(false);
+    // Best-effort server-side blacklist of the (rotation-current) refresh token —
+    // uses the tokens still in storage. Never leave the user half-logged-in: clear
+    // client tokens whether or not the call succeeds (M5).
+    try {
+      if (refresh) await authService.logout(refresh);
+    } catch {
+      // network/expired token — proceed to clear locally regardless.
+    } finally {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+    }
   };
 
   return (

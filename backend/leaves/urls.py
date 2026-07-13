@@ -25,6 +25,10 @@ admin_router.register("leaves/admin/leave-types", admin_views.AdminLeaveTypeView
 # Custom endpoints. These are listed (and included) before the Level 1
 # /leaves/<pk>/ route so they are not swallowed by the detail matcher.
 urlpatterns = [
+    path("leaves/my-entitlements/", views.MyEntitlementsView.as_view(), name="leave-my-entitlements"),
+    path("leaves/my-report/<str:period>/", views.MyLeaveReportView.as_view(), name="leave-my-report"),
+    path("leaves/hr/category-review/", views.HRCategoryReviewView.as_view(), name="leave-hr-category-review"),
+    path("leaves/compensatory/", views.CompensatoryView.as_view(), name="leave-compensatory"),
     path("leaves/my-history/", views.MyLeaveHistoryView.as_view(), name="leave-my-history"),
     path("leaves/calendar/", views.LeaveCalendarRecordsView.as_view(), name="leave-day-calendar"),
     path("leaves/team-attendance/", views.TeamAttendanceView.as_view(), name="leave-team-attendance"),

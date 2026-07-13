@@ -1,11 +1,11 @@
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
+from django.views.static import serve
 from rest_framework.routers import DefaultRouter
 
 from leaves.views import LeaveViewSet, LeaveBalanceView, LeaveCalendarView
-from users.views import CurrentUserView, UserListView, ChangePasswordView
+from users.views import CurrentUserView, UserListView, ChangePasswordView, ProfileMeView, ProfilePhotoView
 from users.token_serializers import EmailLoginView, LogoutView, SafeTokenRefreshView
 from users.admin_views import AdminUserViewSet, AdminLeaveViewSet, AdminBalanceViewSet, AdminStatsView
 from config.health_views import HealthView, DetailedHealthView
@@ -32,7 +32,11 @@ urlpatterns = [
     # Registration removed in Phase 2.5 (admin-created accounts only).
     path('api/v1/auth/user/', CurrentUserView.as_view(), name='token_user'),
     path('api/v1/auth/change-password/', ChangePasswordView.as_view(), name='change-password'),
-    
+
+    # Self-service profile (read + edit own editable fields + photo)
+    path('api/v1/profile/me/', ProfileMeView.as_view(), name='profile-me'),
+    path('api/v1/profile/me/photo/', ProfilePhotoView.as_view(), name='profile-me-photo'),
+
     # User list API
     path('api/v1/users/', UserListView.as_view(), name='user-list'),
     
@@ -66,10 +70,19 @@ urlpatterns = [
     # Public document verification (Phase 10)
     path('api/v1/', include('documents.urls')),
 
+    # Attendance (check-in/out, calendar, HR management)
+    path('api/v1/', include('attendance.urls')),
+
     # Health checks (Phase 5)
     path('api/v1/health/', HealthView.as_view(), name='health'),
     path('api/v1/health/detailed/', DetailedHealthView.as_view(), name='health-detailed'),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Media files (uploaded memo attachments, profile photos, generated PDFs).
+# When USE_S3 is set the storage backend serves them from the bucket directly,
+# so no local route is registered. Otherwise Django serves them from the
+# MEDIA_ROOT persistent disk in both development and production.
+if not settings.USE_S3:
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+    ]

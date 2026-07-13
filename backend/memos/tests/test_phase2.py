@@ -18,13 +18,22 @@ def _draft_by(api, user):
 
 # --- STEP 2.2: universal creation ------------------------------------------
 @pytest.mark.django_db
-@pytest.mark.parametrize("role_fixture", ["maker", "checker", "approver", "admin"])
-def test_any_authenticated_user_can_create_memo(api, request, role_fixture):
+@pytest.mark.parametrize("role_fixture", ["maker", "checker", "approver"])
+def test_non_admin_users_can_create_memo(api, request, role_fixture):
+    # Employee / Department Head / HR may author memos. Admin is excluded below.
     user = request.getfixturevalue(role_fixture)
     api.force_authenticate(user)
     resp = api.post("/api/v1/memos/", _payload(), format="json")
     assert resp.status_code == 201, resp.data
     assert Memo.objects.get(id=resp.data["id"]).created_by_id == user.id
+
+
+@pytest.mark.django_db
+def test_admin_cannot_create_memo(api, admin):
+    # Admin is an oversight/approval role and does not author memo requests.
+    api.force_authenticate(admin)
+    resp = api.post("/api/v1/memos/", _payload(), format="json")
+    assert resp.status_code == 403, resp.data
 
 
 @pytest.mark.django_db

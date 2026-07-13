@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Plus, ArrowRight, FileText } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { memoService } from '../../services/memoService';
+import { can } from '../../services/roles';
 
 const Tile = ({ label, value }) => (
   <div style={{ flex: 1, background: 'var(--bg-main)', borderRadius: 'var(--radius-md)', padding: '14px 16px' }}>
@@ -36,10 +37,13 @@ const DashboardMemoCard = () => {
         </button>
       </div>
       <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-        <Tile label="Created by me" value={mine} />
+        {/* "Created by me" is a personal widget — hidden for Admin (oversight only). */}
+        {can(role, 'myMemos') && <Tile label="Created by me" value={mine} />}
         {(role === 'checker' || role === 'approver' || role === 'admin') && <Tile label="Pending my action" value={pending} />}
       </div>
-      <button type="button" className="lr-btn lr-btn-primary" onClick={() => navigate('/memos/create')}><Plus size={14} /> Create Memo</button>
+      {can(role, 'createMemo') && (
+        <button type="button" className="lr-btn lr-btn-primary" onClick={() => navigate('/memos/create')}><Plus size={14} /> Create Memo</button>
+      )}
     </div>
   );
 };

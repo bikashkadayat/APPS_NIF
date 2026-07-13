@@ -31,7 +31,16 @@ from .models import (
 User = get_user_model()
 
 ZERO = Decimal("0.00")
-WEEKEND_WEEKDAYS = {5, 6}  # Saturday, Sunday (Python weekday(): Mon=0 .. Sun=6)
+WEEKEND_WEEKDAYS = {5}  # Saturday only — Nepal's weekly holiday. Sunday is a working day. (weekday(): Mon=0 .. Sat=5 .. Sun=6)
+
+# Day-record statuses that hold balance. A leave in the two-stage flow writes its
+# Leave.status verbatim onto its day records (see sync_leave_day_records), so a
+# record can carry "pending_hr" even though LeaveDayRecord.Status has no such
+# member. Both in-flight statuses reserve balance; only APPROVED consumes it, but
+# for availability BOTH must be subtracted (mirrors EnterpriseLeaveBalance.available_days).
+PENDING_DAY_STATUSES = ("pending", "pending_hr")
+# "Committed" = anything not yet released (rejected/cancelled): reserved or consumed.
+COMMITTED_DAY_STATUSES = ("approved", "pending", "pending_hr")
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +186,11 @@ def sync_leave_day_records(leave_request):
 
     for year in years:
         recompute_leave_balance(user, leave_type, year)
+        # Keep the simple dashboard balance in lock-step with the enterprise one.
+        sync_simple_balance(user, leave_request.leave_type, year)
+    # Compensatory leave consumes earned ledger days, not a fixed allocation.
+    from . import category_engine
+    category_engine.reconcile_comp_usage(leave_request)
     for year, week in weeks:
         recompute_weekly_summary(user, year, week)
     for year, month in months:
@@ -269,8 +283,10 @@ def recompute_leave_balance(user, leave_type, year):
     used = _sum_portion(_working_records(
         user, leave_type, year=year, status=LeaveDayRecord.Status.APPROVED
     ))
+    # Count BOTH pending stages (pending = awaiting Dept Head, pending_hr =
+    # awaiting HR) so an in-flight Level-2 leave still reserves balance.
     pending = _sum_portion(_working_records(
-        user, leave_type, year=year, status=LeaveDayRecord.Status.PENDING
+        user, leave_type, year=year, status__in=PENDING_DAY_STATUSES
     ))
 
     balance, _ = EnterpriseLeaveBalance.objects.get_or_create(
@@ -317,7 +333,7 @@ def recompute_weekly_summary(user, year, week_number):
 
     working = [r for r in records if r.is_working_day]
     approved = _sum_portion([r for r in working if r.status == LeaveDayRecord.Status.APPROVED])
-    pending = _sum_portion([r for r in working if r.status == LeaveDayRecord.Status.PENDING])
+    pending = _sum_portion([r for r in working if r.status in PENDING_DAY_STATUSES])
     rejected = _sum_portion([r for r in working if r.status == LeaveDayRecord.Status.REJECTED])
     working_days = int(calculate_working_days(week_start, week_end))
 
@@ -329,7 +345,7 @@ def recompute_weekly_summary(user, year, week_number):
     summary.week_end_date = week_end
     summary.total_leave_days = approved + pending
     summary.by_type = _by_type_breakdown(
-        [r for r in working if r.status in (LeaveDayRecord.Status.APPROVED, LeaveDayRecord.Status.PENDING)]
+        [r for r in working if r.status == LeaveDayRecord.Status.APPROVED or r.status in PENDING_DAY_STATUSES]
     )
     summary.approved_days = approved
     summary.pending_days = pending
@@ -353,7 +369,7 @@ def recompute_monthly_summary(user, year, month):
 
     working = [r for r in records if r.is_working_day]
     approved = _sum_portion([r for r in working if r.status == LeaveDayRecord.Status.APPROVED])
-    pending = _sum_portion([r for r in working if r.status == LeaveDayRecord.Status.PENDING])
+    pending = _sum_portion([r for r in working if r.status in PENDING_DAY_STATUSES])
     working_days = int(calculate_working_days(month_start, month_end))
 
     summary, _ = MonthlyLeaveSummary.objects.get_or_create(
@@ -361,7 +377,7 @@ def recompute_monthly_summary(user, year, month):
     )
     summary.total_leave_days = approved + pending
     summary.by_type = _by_type_breakdown(
-        [r for r in working if r.status in (LeaveDayRecord.Status.APPROVED, LeaveDayRecord.Status.PENDING)]
+        [r for r in working if r.status == LeaveDayRecord.Status.APPROVED or r.status in PENDING_DAY_STATUSES]
     )
     summary.approved_days = approved
     summary.pending_days = pending
@@ -391,6 +407,9 @@ def soft_delete_leave(leave):
         leave_type = records[0].leave_type
         for year in {r.year for r in records}:
             recompute_leave_balance(leave.user, leave_type, year)
+            # Refund the simple dashboard balance too (H3): cancelled records
+            # leave the committed set, so used_so_far drops on recompute.
+            sync_simple_balance(leave.user, leave.leave_type, year)
         for year, week in {(r.year, r.week_number) for r in records}:
             recompute_weekly_summary(leave.user, year, week)
         for year, month in {(r.year, r.month) for r in records}:
@@ -532,3 +551,98 @@ def apply_leave_policy(department, role, leave_type, days, effective_from, actor
         },
     )
     return policy
+
+
+# ---------------------------------------------------------------------------
+# Simple-model leave balances (dashboard) - entitlements sourced from the CMS
+# LeaveType (configurable by HR/Admin), keyed by the lowercase LeaveBalance codes.
+# ---------------------------------------------------------------------------
+ENTITLEMENT_CODES = ["annual", "sick", "casual"]
+
+
+def entitlement_for(code):
+    """Configurable yearly entitlement for a simple leave code, read from the
+    CMS LeaveType.default_days_per_year (not hardcoded)."""
+    lt = LeaveType.objects.filter(code__iexact=code).first()
+    return int(lt.default_days_per_year) if lt else 0
+
+
+def ensure_leave_balances(user, year):
+    """Create this user's LeaveBalance rows for `year` from the entitlement
+    policy (idempotent). Called on user creation, balance reads, and yearly reset."""
+    from .models import LeaveBalance
+
+    created = []
+    for code in ENTITLEMENT_CODES:
+        obj, was_created = LeaveBalance.objects.get_or_create(
+            user=user, leave_type=code, year=year,
+            defaults={"total_allocated": entitlement_for(code), "used_so_far": 0},
+        )
+        if was_created:
+            created.append(obj)
+    return created
+
+
+def working_leave_days(leave):
+    """Working days for a leave request, skipping Saturdays + public holidays."""
+    return int(calculate_working_days(leave.start_date, leave.end_date))
+
+
+@transaction.atomic
+def sync_simple_balance(user, code, year):
+    """
+    Recompute the simple dashboard LeaveBalance.used_so_far for one
+    (user, leave code, year) from the LeaveDayRecord source of truth, so the
+    dashboard/serializer can never drift from the enterprise balance.
+
+    `used_so_far` holds *committed* working days = approved + both pending stages
+    (weekends & holidays excluded). This means:
+      * remaining (= total_allocated - used_so_far) already reserves in-flight
+        leave, so a user cannot over-apply (H4);
+      * cancelling/rejecting an approved leave frees the balance automatically,
+        because its day records leave the committed set (H3);
+      * the value is derived, never incremented, so it cannot double-deduct (M3)
+        and cannot exceed the allocation once the apply-time guard holds (H4 cap).
+
+    Race-safe: the balance row is locked with select_for_update for the life of
+    the enclosing transaction (M4). No-op for codes without a simple balance.
+    """
+    from .models import EntitlementRule, LeaveBalance
+
+    code = (code or "").lower()
+    if not code:
+        return None
+    leave_type = LeaveType.objects.filter(code__iexact=code).first()
+    if leave_type is None:
+        return None
+
+    LeaveBalance.objects.get_or_create(
+        user=user, leave_type=code, year=year,
+        defaults={"total_allocated": entitlement_for(code), "used_so_far": 0},
+    )
+    balance = LeaveBalance.objects.select_for_update().get(
+        user=user, leave_type=code, year=year,
+    )
+
+    # Annual/Sick are counted in working days (Sat + holidays excluded); fixed
+    # entitlements like Maternity/Paternity are calendar-day based, so their
+    # weekend/holiday records still consume the allocation.
+    rule = EntitlementRule.objects.filter(leave_type=leave_type).first()
+    working_day_based = rule.is_working_day_based if rule is not None else True
+
+    qs = LeaveDayRecord.objects.filter(
+        user=user, leave_type=leave_type, year=year, status__in=COMMITTED_DAY_STATUSES,
+    )
+    if working_day_based:
+        qs = qs.filter(is_weekend=False, is_holiday=False)
+    committed = _sum_portion(qs)
+
+    balance.used_so_far = float(committed)
+    balance.save(update_fields=["used_so_far"])
+    return balance
+
+
+def sync_simple_balance_by_id(user_id, code, year):
+    """Convenience wrapper for batch jobs / migrations (fetches the user by id)."""
+    user = User.objects.get(pk=user_id)
+    return sync_simple_balance(user, code, year)

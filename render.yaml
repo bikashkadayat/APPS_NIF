@@ -55,9 +55,18 @@ services:
         fromDatabase:
           name: nif-db
           property: password
-      # Only needed if the frontend calls the backend cross-origin (absolute
-      # URL) instead of the same-origin Vercel rewrite. Set to your Vercel URL.
+      # The frontend calls the backend same-origin through the Vercel rewrite,
+      # so CORS is normally unused. Keep disabled unless you switch to an
+      # absolute cross-origin VITE_API_URL - then add CORS_ALLOWED_ORIGINS with
+      # your Vercel domain in the dashboard.
       - key: CORS_ALLOW_ALL_ORIGINS
         value: "False"
-      - key: CORS_ALLOWED_ORIGINS
-        value: "https://REPLACE-WITH-YOUR-APP.vercel.app"
+      # Public URLs for email action links + PDF QR verification. Entered in the
+      # Render dashboard at deploy time (no hardcoded placeholders).
+      - key: FRONTEND_URL
+        sync: false
+      - key: SITE_URL
+        sync: false
+      # Gunicorn tuning (safe defaults; raise workers on paid instances).
+      - key: GUNICORN_WORKERS
+        value: "3"

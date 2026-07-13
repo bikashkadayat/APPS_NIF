@@ -8,7 +8,7 @@ import { ArrowLeft, Plus } from 'lucide-react';
 
 const MyApplications = () => {
   const navigate = useNavigate();
-  const { leaves, loading, fetchLeaves } = useLeaves();
+  const { leaves, loading, error, fetchLeaves } = useLeaves();
   const { user, role } = useAuth();
   const [filter, setFilter] = useState('all');
 
@@ -47,7 +47,10 @@ const MyApplications = () => {
     );
   }
 
-  const myLeaves = leaves.filter(l => l.employee === user.name && (filter === 'all' || l.status === filter));
+  // Show only the current user's applications. Match on owner id (robust);
+  // fall back to name only if the id isn't present in the payload.
+  const mine = leaves.filter(l => (l.userId ? l.userId === user.id : l.employee === user.name));
+  const myLeaves = mine.filter(l => filter === 'all' || l.status === filter);
 
   return (
     <div className="page">
@@ -81,51 +84,58 @@ const MyApplications = () => {
 
         {loading ? (
           <div style={{ padding: '24px', textAlign: 'center' }}>Loading applications...</div>
+        ) : error ? (
+          <div style={{ padding: '32px', textAlign: 'center' }}>
+            <div style={{ color: 'var(--danger, #b91c1c)', marginBottom: 12 }}>Could not load your applications. {error}</div>
+            <button className="btn btn-primary" onClick={fetchLeaves}>Retry</button>
+          </div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Reference</th>
-                <th>Leave Details</th>
-                <th>Dates</th>
-                <th>Status</th>
-                <th>Documents</th>
-              </tr>
-            </thead>
-            <tbody>
-              {myLeaves.map(leave => (
-                <tr key={leave.id} className="mrow">
-                  <td>
-                    <div className="ref-no">{leave.id}</div>
-                    <div className="leave-meta">{leave.applied}</div>
-                  </td>
-                  <td>
-                    <div className="leave-title">{leave.type}</div>
-                    <div className="leave-meta">{leave.reason}</div>
-                  </td>
-                  <td>
-                    <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{leave.start} to {leave.end}</div>
-                    <div className="leave-meta">{leave.days} Days</div>
-                  </td>
-                  <td>
-                    <Badge status={leave.status} />
-                  </td>
-                  <td>
-                    {leave.status === 'approved'
-                      ? <LeaveDocActions leaveId={leave.id} />
-                      : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Available when approved</span>}
-                  </td>
-                </tr>
-              ))}
-              {myLeaves.length === 0 && (
+          <div className="resp-table-wrap">
+            <table className="resp-table">
+              <thead>
                 <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
-                    No applications found.
-                  </td>
+                  <th>Reference</th>
+                  <th>Leave Details</th>
+                  <th>Dates</th>
+                  <th>Status</th>
+                  <th>Documents</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {myLeaves.map(leave => (
+                  <tr key={leave.id} className="mrow">
+                    <td data-label="Reference">
+                      <div className="ref-no">{leave.id}</div>
+                      <div className="leave-meta">{leave.applied}</div>
+                    </td>
+                    <td data-label="Leave Details">
+                      <div className="leave-title">{leave.type}</div>
+                      <div className="leave-meta">{leave.reason}</div>
+                    </td>
+                    <td data-label="Dates">
+                      <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{leave.start} to {leave.end}</div>
+                      <div className="leave-meta">{leave.days} Days</div>
+                    </td>
+                    <td data-label="Status">
+                      <Badge status={leave.status} />
+                    </td>
+                    <td data-label="Documents">
+                      {leave.status === 'approved'
+                        ? <LeaveDocActions leaveId={leave.id} />
+                        : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Available when approved</span>}
+                    </td>
+                  </tr>
+                ))}
+                {myLeaves.length === 0 && (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
+                      No applications found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

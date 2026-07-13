@@ -14,7 +14,13 @@ def admin_user(db):
 
 @pytest.fixture
 def maker_user(db):
-    return User.objects.create_user(username="maker1", email="maker1@nif.test", password="pass12345", role=User.Roles.MAKER)
+    from datetime import date
+    # Permanent + tenured so the category engine grants a non-zero Annual balance
+    # (otherwise the apply guard blocks the leave used to exercise the audit log).
+    return User.objects.create_user(
+        username="maker1", email="maker1@nif.test", password="pass12345", role=User.Roles.MAKER,
+        employment_type=User.EmploymentType.PERMANENT, date_of_joining=date(2018, 1, 1),
+    )
 
 
 @pytest.mark.django_db

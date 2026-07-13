@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useLeaves } from '../../hooks/useLeaves';
 import { useAuth } from '../../hooks/useAuth';
 import { adminService } from '../../services/adminService';
+import { leaveService, leaveTypeLabel } from '../../services/leaveService';
+import { roleLabel, can } from '../../services/roles';
 import { Calendar, Clock, User, FileText, ArrowLeft, Send } from 'lucide-react';
 
 const ApplyLeave = () => {
@@ -10,18 +12,32 @@ const ApplyLeave = () => {
   const { applyLeave, loading } = useLeaves();
   const { role } = useAuth();
   const [managers, setManagers] = useState([]);
+  // Leave types this user's category may apply for (from the entitlement engine).
+  const [leaveTypes, setLeaveTypes] = useState([]);
 
   useEffect(() => {
     const fetchManagers = async () => {
       try {
         const users = await adminService.getUsers();
-        const approvers = users.filter(u => u.role === 'approver');
-        setManagers(approvers);
+        // Reporting managers = Department Heads (checker) and HR (approver).
+        const mgrs = users.filter(u => ['approver', 'checker'].includes(u.role) && u.is_active !== false);
+        setManagers(mgrs);
       } catch (err) {
         console.error('Error fetching users:', err);
       }
     };
+    const fetchTypes = async () => {
+      try {
+        const ent = await leaveService.getEntitlements();
+        // applicable_types are uppercase codes (ANNUAL, SICK, COMPENSATORY, …).
+        const labels = (ent.applicable_types || []).map((c) => leaveTypeLabel(c.toLowerCase()));
+        setLeaveTypes(labels);
+      } catch {
+        setLeaveTypes(['Annual Leave', 'Sick Leave']); // safe fallback
+      }
+    };
     fetchManagers();
+    fetchTypes();
   }, []);
 
   const [formData, setFormData] = useState({
@@ -38,13 +54,22 @@ const ApplyLeave = () => {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
 
-  if (role !== 'maker' && role !== 'admin') {
+  // Keep the selected type valid for the user's category (default to the first).
+  useEffect(() => {
+    if (leaveTypes.length && !leaveTypes.includes(formData.type)) {
+      setFormData((f) => ({ ...f, type: leaveTypes[0] }));
+    }
+  }, [leaveTypes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Employees, Department Heads and HR may apply for their own leave; Admin is an
+  // oversight role and cannot (backend also 403s admins). Central gate = roles.js.
+  if (!can(role, 'applyLeave')) {
     return (
       <div className="page">
         <div className="pg-head">
           <div>
             <div className="pg-title">Access Denied</div>
-            <div className="pg-desc">Only makers may apply for leave.</div>
+            <div className="pg-desc">Admins manage and approve leave and do not submit personal applications.</div>
           </div>
         </div>
         <div className="empty-state">
@@ -66,11 +91,28 @@ const ApplyLeave = () => {
     window.setTimeout(() => setSuccessMessage(''), 3500);
   };
 
+  const extractError = (err) => {
+    const data = err?.response?.data;
+    if (!data) return err?.message || 'Failed to submit application';
+    if (Array.isArray(data)) return data.join(' ');
+    if (typeof data === 'string') return data;
+    if (data.detail) return data.detail;
+    if (typeof data === 'object') {
+      // DRF field errors: {"field": ["msg", ...], ...}
+      const parts = Object.entries(data).map(([k, v]) => {
+        const val = Array.isArray(v) ? v.join(' ') : v;
+        return k === 'non_field_errors' ? val : `${k}: ${val}`;
+      });
+      if (parts.length) return parts.join(' \n');
+    }
+    return err?.message || 'Failed to submit application';
+  };
+
   const handleSubmit = async () => {
     setError(null);
-    
-    if (!formData.start || !formData.end || !formData.manager || !formData.reason) {
-      setError('Please fill all required fields');
+
+    if (!formData.start || !formData.end || !formData.approver_id || !formData.reason) {
+      setError('Please fill all required fields, including Reporting Manager.');
       return;
     }
 
@@ -84,7 +126,7 @@ const ApplyLeave = () => {
       showSuccess('Leave application submitted successfully!');
       setTimeout(() => navigate('/leave/my-applications'), 1500);
     } catch (err) {
-      setError(err?.response?.data?.detail || err.message || 'Failed to submit application');
+      setError(extractError(err));
     }
   };
 
@@ -139,11 +181,8 @@ const ApplyLeave = () => {
           <div className="fg">
             <label><Calendar size={16} /> Leave Type <span className="req">*</span></label>
             <select id="lv-type" value={formData.type} onChange={handleChange}>
-              <option>Annual Leave</option>
-              <option>Sick Leave</option>
-              <option>Casual Leave</option>
-              <option>Unpaid Leave</option>
-              <option>Work from Home</option>
+              {leaveTypes.length === 0 && <option value="">No leave types available for your category</option>}
+              {leaveTypes.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div className="fg">
@@ -167,19 +206,18 @@ const ApplyLeave = () => {
         <div className="fgrid">
           <div className="fg">
             <label><User size={16} /> Reporting Manager <span className="req">*</span></label>
-              <select id="lv-manager" value={formData.manager} onChange={(e) => {
+              <select id="lv-manager" value={formData.approver_id} onChange={(e) => {
                 const selectedId = e.target.value;
                 const selected = managers.find(m => m.id === selectedId);
-                const name = selected ? `${selected.first_name} ${selected.last_name}`.trim() || selected.username || selected.email : '';
+                const name = selected ? (`${selected.first_name || ''} ${selected.last_name || ''}`.trim() || selected.username || selected.email) : '';
                 setFormData({ ...formData, manager: name, approver_id: selectedId });
               }}>
                 <option value="">Select Manager</option>
                 {managers.map(m => {
                   const name = m.first_name && m.last_name ? `${m.first_name} ${m.last_name}` : m.username || m.email;
-                  const roleLabel = m.role === 'approver' ? 'Approver' : m.role;
                   return (
                     <option key={m.id} value={m.id}>
-                      {name} — {roleLabel}
+                      {name} — {roleLabel(m.role)}
                     </option>
                   );
                 })}

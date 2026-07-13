@@ -1,16 +1,5 @@
-Django
-djangorestframework
-djangorestframework-simplejwt
-django-cors-headers
-django-filter
-openpyxl
-weasyprint
-qrcode
-Pillow
-bcrypt
-bleach
-python-magic
-psycopg2-binary
-gunicorn
-pytest
-pytest-django
+# Canonical, split & pinned requirements now live in requirements/.
+# This shim is kept for backwards compatibility and installs the production set.
+#   Production : pip install -r requirements/production.txt
+#   Development: pip install -r requirements/development.txt
+-r requirements/production.txt

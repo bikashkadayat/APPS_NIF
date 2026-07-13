@@ -23,6 +23,14 @@ const Badge = ({ status }) => {
       className += 'ch-rejected';
       label = 'Rejected';
       break;
+    case 'pending':
+      className += 'ch-pending';
+      label = 'Pending — Dept Head';
+      break;
+    case 'pending_hr':
+      className += 'ch-checking';
+      label = 'Pending — HR';
+      break;
     default:
       className += 'ch-pending';
       label = status;

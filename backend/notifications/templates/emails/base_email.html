@@ -11,9 +11,16 @@
       <td align="center">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
           <tr>
-            <td style="background:{% block accent %}#2563EB{% endblock %};padding:20px 28px;">
-              <span style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.5px;">NIF Portal</span>
-              <span style="color:rgba(255,255,255,.85);font-size:12px;float:right;margin-top:4px;">{% block label %}Notification{% endblock %}</span>
+            <td style="background:{% block accent %}#2563EB{% endblock %};padding:18px 28px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align:middle;">
+                    {% if logo_url %}<img src="{{ logo_url }}" alt="{{ org_name }}" height="40" style="height:40px;vertical-align:middle;margin-right:10px;border:0;">{% endif %}
+                    <span style="color:#ffffff;font-size:15px;font-weight:700;letter-spacing:.3px;vertical-align:middle;">{{ org_name|default:"Nepal Internet Foundation" }}</span>
+                  </td>
+                  <td style="vertical-align:middle;text-align:right;color:rgba(255,255,255,.9);font-size:12px;">{% block label %}Notification{% endblock %}</td>
+                </tr>
+              </table>
             </td>
           </tr>
           <tr>

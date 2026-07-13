@@ -11,6 +11,10 @@ class LeaveBalance(models.Model):
         ANNUAL = "annual", "Annual Leave"
         SICK = "sick", "Sick Leave"
         CASUAL = "casual", "Casual Leave"
+        # Category engine leave types (entitlements live in EntitlementRule).
+        MATERNITY = "maternity", "Maternity Leave"
+        PATERNITY = "paternity", "Paternity Leave"
+        COMPENSATORY = "compensatory", "Compensatory Leave"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="leave_balances")
@@ -24,7 +28,9 @@ class LeaveBalance(models.Model):
 
     @property
     def remaining(self):
-        return self.total_allocated - self.used_so_far
+        # Never surface a negative balance (e.g. if an entitlement is cut below a
+        # user's already-approved usage): clamp at 0. `used_so_far` stays truthful.
+        return max(0, self.total_allocated - self.used_so_far)
 
     def __str__(self):
         return f"{self.user} - {self.leave_type} ({self.year})"
@@ -35,7 +41,11 @@ class Leave(models.Model):
     Leave Application tracking model.
     """
     class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
+        # Two-stage flow (Phase 2.6): PENDING = awaiting Department Head (L1);
+        # PENDING_HR = Dept Head approved, awaiting HR (L2); then APPROVED/REJECTED.
+        # Existing rows keep PENDING/APPROVED/REJECTED - fully backward compatible.
+        PENDING = "pending", "Pending (Department Head)"
+        PENDING_HR = "pending_hr", "Pending (HR)"
         APPROVED = "approved", "Approved"
         REJECTED = "rejected", "Rejected"
 
@@ -46,9 +56,24 @@ class Leave(models.Model):
     end_date = models.DateField()
     reason = models.TextField()
     handover_notes = models.TextField(blank=True, default='')
-    
+
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Final approver (HR). Kept for backward compatibility - still set on final action.
     approver = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="leaves_to_approve")
+
+    # Phase 2.6: two-stage review trail (all nullable/additive).
+    department_head_reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="leaves_dh_reviewed",
+    )
+    department_head_action_date = models.DateTimeField(null=True, blank=True)
+    hr_reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="leaves_hr_reviewed",
+    )
+    hr_action_date = models.DateTimeField(null=True, blank=True)
+    # Reviewer remarks (rejection reason / approval note), shown to the employee.
+    remarks = models.TextField(blank=True, default='')
 
     # TODO(deferred, Phase 5 candidate): add a `rejection_comment` field so an
     # approver's reason is stored and shown to the maker. The current model has
@@ -291,6 +316,98 @@ class EnterpriseLeaveBalance(models.Model):
 
     def __str__(self):
         return f"{self.user} {self.leave_type.code} {self.year}: {self.available_days} avail"
+
+
+# ===========================================================================
+# Experience-based entitlement engine (category-driven, DB source of truth).
+# EntitlementRule replaces the flat LeaveType.default_days_per_year path for the
+# simple dashboard balances; CompensatoryLedger tracks earned/used comp days.
+# ===========================================================================
+
+# Category values mirror users.User.LeaveCategory (duplicated as plain choices to
+# avoid an import cycle at model-load; the engine maps between them).
+LEAVE_CATEGORY_CHOICES = [
+    ("A", "Category A — Permanent (>3 yrs)"),
+    ("B", "Category B — Permanent (1–3 yrs)"),
+    ("C", "Category C — Post-Probation / Permanent (<1 yr)"),
+    ("D", "Category D — Intern / Volunteer"),
+    ("PROBATION", "Probation (<3 mo)"),
+]
+
+
+class EntitlementRule(models.Model):
+    """
+    HR/Admin-configurable entitlement: how many days of a leave type a given
+    category receives. This is the SOURCE OF TRUTH for yearly allocations
+    (seeded with the A/B/C/D/PROBATION matrix, editable from the admin CMS).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    category = models.CharField(max_length=12, choices=LEAVE_CATEGORY_CHOICES)
+    leave_type = models.ForeignKey(LeaveType, on_delete=models.CASCADE, related_name="entitlement_rules")
+    entitlement_days = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("0.00"))
+    # Annual/Sick are counted in working days (Sat + holidays excluded); fixed
+    # entitlements like Maternity/Paternity are calendar-day based.
+    is_working_day_based = models.BooleanField(default=True)
+    # False => this leave type is not offered to this category (e.g. Maternity for
+    # Interns). Compensatory rows are applicable=True but entitlement_days=0
+    # because comp is earned into the ledger, not allocated yearly.
+    applicable = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["category", "leave_type__code"]
+        constraints = [
+            models.UniqueConstraint(fields=["category", "leave_type"], name="uniq_entitlement_category_type"),
+        ]
+
+    def __str__(self):
+        return f"{self.category}/{self.leave_type.code} = {self.entitlement_days}"
+
+
+class CompensatoryLedger(models.Model):
+    """
+    Append-only ledger of compensatory (comp) leave. Comp is EARNED (working a
+    weekend/holiday), not allocated yearly. Available = confirmed earned - used.
+
+    Earn sources:
+      * ATTENDANCE - auto-created (status=PENDING) when a check-in lands on a
+        Saturday/public holiday; a manager/HR must CONFIRM before it counts.
+      * HR_GRANT   - manual HR entry for off-system/field work; CONFIRMED at once.
+    Use entries are created when comp leave is approved (status=CONFIRMED).
+    """
+    class EntryType(models.TextChoices):
+        EARN = "earn", "Earned"
+        USE = "use", "Used"
+
+    class Source(models.TextChoices):
+        ATTENDANCE = "attendance", "Attendance (weekend/holiday work)"
+        HR_GRANT = "hr_grant", "HR manual grant"
+        LEAVE_USE = "leave_use", "Comp leave taken"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending confirmation"
+        CONFIRMED = "confirmed", "Confirmed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="comp_ledger")
+    entry_type = models.CharField(max_length=8, choices=EntryType.choices)
+    days = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("1.00"))
+    source = models.CharField(max_length=12, choices=Source.choices)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    source_date = models.DateField(null=True, blank=True, help_text="Weekend/holiday worked (for earn entries).")
+    leave = models.ForeignKey(Leave, on_delete=models.SET_NULL, null=True, blank=True, related_name="comp_entries")
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="comp_approved",
+    )
+    note = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "entry_type", "status"])]
+
+    def __str__(self):
+        return f"{self.user} {self.entry_type} {self.days} ({self.status})"
 
 
 class WeeklyLeaveSummary(models.Model):

@@ -50,25 +50,31 @@ def _check_low_balance(leave):
 
 @receiver(post_save, sender=Leave)
 def leave_notifications(sender, instance, created, **kwargs):
+    """
+    Single source of truth for leave-workflow notifications. Fires on every
+    Leave.save() (API endpoints, bulk actions, admin, shell), and delegates to
+    leaves.notifications for the rich, dynamically-addressed, BS+AD-dated emails.
+    Each trigger is idempotency-keyed, so a transition can't notify twice.
+    """
+    from leaves import notifications as leave_notify
+
     if getattr(instance, "is_deleted", False):
         return
 
-    span = f"{instance.leave_type} · {instance.start_date} to {instance.end_date}"
-
     if created:
-        if instance.approver:
-            notify(
-                instance.approver, Category.LEAVE_SUBMITTED,
-                f"New leave request from {_employee(instance.user)}",
-                span, action_url="/leave/pending",
-            )
+        leave_notify.leave_submitted(instance)          # Trigger 1 -> Dept Head(s) + HR
         _check_low_balance(instance)
         return
 
     old = getattr(instance, "_old_status", None)
     if old is not None and old != instance.status:
-        if instance.status == Leave.Status.APPROVED:
-            notify(instance.user, Category.LEAVE_APPROVED, "Your leave was approved", span, action_url="/leave/my-applications")
+        if instance.status == Leave.Status.PENDING_HR:
+            leave_notify.leave_l1_approved(instance)      # Trigger 2 -> HR (+ employee)
+        elif instance.status == Leave.Status.APPROVED:
+            leave_notify.leave_finalized(instance)        # Trigger 3 -> employee (approved)
         elif instance.status == Leave.Status.REJECTED:
-            notify(instance.user, Category.LEAVE_REJECTED, "Your leave was rejected", span, action_url="/leave/my-applications")
+            if old == Leave.Status.PENDING:
+                leave_notify.leave_rejected_l1(instance)  # Trigger 4 -> employee (L1 reject)
+            else:
+                leave_notify.leave_finalized(instance)    # Trigger 3 -> employee (L2 reject)
         _check_low_balance(instance)

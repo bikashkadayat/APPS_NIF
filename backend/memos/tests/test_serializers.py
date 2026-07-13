@@ -96,4 +96,5 @@ def test_detail_serializer_capability_flags_for_author(draft_memo, maker):
     assert data["can_review"] is False
     assert data["created_by"]["email"] == maker.email
     # list-style nested user should not leak password or full model
-    assert set(data["created_by"].keys()) == {"id", "full_name", "email", "role", "department"}
+    # (employee_id added for the detailed-review panel: "Created By ... + employee ID").
+    assert set(data["created_by"].keys()) == {"id", "full_name", "email", "role", "department", "employee_id"}

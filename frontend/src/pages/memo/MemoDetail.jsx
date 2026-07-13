@@ -92,11 +92,13 @@ const MemoDetail = () => {
       <button type="button" className="lr-btn lr-btn-ghost" onClick={() => navigate(-1)} style={{ marginBottom: 16 }}><ArrowLeft size={14} /> Back</button>
 
       <div className="lr-page-head">
-        <div>
-          <div style={{ fontFamily: '"Playfair Display", serif', fontSize: 22, fontWeight: 700 }}>{memo.memo_number}</div>
-          <h2 style={{ margin: '2px 0' }}>{memo.title}</h2>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-            <MemoStatusBadge status={memo.status} /><MemoPriorityBadge priority={memo.priority} /><MemoTypeBadge memo_type={memo.memo_type} />
+        <div className="memo-head">
+          <div className="memo-head-number">{memo.memo_number}</div>
+          <h1 className="memo-head-title">{memo.title}</h1>
+          <div className="memo-head-badges">
+            <MemoStatusBadge status={memo.status} />
+            <MemoPriorityBadge priority={memo.priority} />
+            <MemoTypeBadge memo_type={memo.memo_type} />
           </div>
         </div>
         {memo.status === 'approved' && (

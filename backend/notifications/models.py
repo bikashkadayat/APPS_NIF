@@ -65,3 +65,36 @@ class NotificationPreference(models.Model):
 
     def __str__(self):
         return f"{self.user} / {self.category}: in_app={self.in_app_enabled} email={self.email_enabled}"
+
+
+class NotificationLog(models.Model):
+    """
+    Audit + retry log for outbound emails. One row per send attempt (sent or
+    failed with the error), so failures are visible and retryable rather than
+    swallowed silently. Written by the email worker; failures to write here are
+    themselves swallowed so logging can never break the workflow.
+    """
+    class Status(models.TextChoices):
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="notification_logs",
+    )
+    recipient_email = models.EmailField(blank=True, default="")
+    category = models.CharField(max_length=40)
+    # Free-form reference to the source object (e.g. the leave UUID) for auditing.
+    object_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    subject = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=10, choices=Status.choices)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["status", "created_at"])]
+
+    def __str__(self):
+        return f"{self.recipient_email} {self.category} [{self.status}]"

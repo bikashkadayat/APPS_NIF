@@ -1,19 +1,40 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { can } from '../../services/roles';
 
-const LeaveSidebar = () => {
+const LeaveSidebar = ({ open = false, onClose }) => {
   const { role } = useAuth();
-  const canApply = role === 'maker' || role === 'admin';
+  // Close the drawer whenever a nav link is activated (event delegation, so no
+  // per-link wiring). Harmless on desktop where the drawer is always in-flow.
+  const handleNavClick = (e) => {
+    if (e.target.closest('a.sb-item')) onClose?.();
+  };
+  // Personal self-service actions — Admin is oversight-only (excluded).
+  const canApply = can(role, 'applyLeave');
+  const canViewOwnApplications = can(role, 'myApplications');
+  const canCreateMemo = can(role, 'createMemo');
+  const canViewOwnMemos = can(role, 'myMemos');
   const canReview = ['approver', 'checker', 'admin'].includes(role);
-  const canViewOwnApplications = role === 'maker' || role === 'admin';
   const canCheck = role === 'checker' || role === 'admin';
   // Managers / HR see the Team Records section.
   const isManager = role === 'admin' || role === 'approver';
   const isAdmin = role === 'admin';
 
   return (
-    <nav className="sidebar">
+    <nav
+      id="app-sidebar"
+      className={`sidebar ${open ? 'open' : ''}`}
+      role="navigation"
+      aria-label="Main navigation"
+      onClick={handleNavClick}
+    >
+      {/* Mobile-only close button (CSS hides it on desktop). */}
+      <button type="button" className="sb-close" aria-label="Close menu" onClick={onClose}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+      </button>
       <div className="sb-section">
         <div className="sb-hd">Overview</div>
         <NavLink to="/leave" end className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
@@ -54,14 +75,18 @@ const LeaveSidebar = () => {
 
       <div className="sb-section">
         <div className="sb-hd">Memos</div>
-        <NavLink to="/memos/create" className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
-          <span className="sb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg></span>
-          Create Memo
-        </NavLink>
-        <NavLink to="/memos/my" className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
-          <span className="sb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
-          My Memos
-        </NavLink>
+        {canCreateMemo && (
+          <NavLink to="/memos/create" className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
+            <span className="sb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg></span>
+            Create Memo
+          </NavLink>
+        )}
+        {canViewOwnMemos && (
+          <NavLink to="/memos/my" className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
+            <span className="sb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+            My Memos
+          </NavLink>
+        )}
         <NavLink to="/memos" end className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
           <span className="sb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
           All Memos
@@ -166,6 +191,16 @@ const LeaveSidebar = () => {
           <NavLink to="/admin/leaves/bulk-actions" className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
             <span className="sb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
             Bulk Actions
+          </NavLink>
+        </div>
+      )}
+
+      {(role === 'approver' || role === 'admin') && (
+        <div className="sb-section">
+          <div className="sb-hd">Attendance</div>
+          <NavLink to="/admin/attendance-reports" className={({ isActive }) => `sb-item ${isActive ? 'on' : ''}`}>
+            <span className="sb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 5-5"/></svg></span>
+            Attendance Reports
           </NavLink>
         </div>
       )}

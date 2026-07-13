@@ -17,7 +17,7 @@ from django.dispatch import receiver
 from . import services
 from .models import Holiday, Leave, LeaveDayRecord
 
-WEEKEND_WEEKDAYS = {5, 6}
+WEEKEND_WEEKDAYS = {5}  # Saturday only — Nepal's weekly holiday (Sunday is a working day).
 
 
 @receiver(pre_save, sender=Leave)

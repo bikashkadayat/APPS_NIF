@@ -92,7 +92,9 @@ def test_seed_leave_types_is_idempotent():
     call_command("seed_leave_types", stdout=StringIO())
     call_command("seed_leave_types", stdout=StringIO())
     assert LeaveType.objects.filter(code="ANNUAL").count() == 1
-    assert LeaveType.objects.count() == 5
+    # 5 command-managed canonical types (incl. COMPENSATORY) + 2 engine types
+    # (Maternity/Paternity) seeded by migration 0013 => 7, no duplicates.
+    assert LeaveType.objects.count() == 7
 
 
 @pytest.mark.django_db

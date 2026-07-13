@@ -8,10 +8,21 @@ import AttendanceIndicator from '../../../components/leave-records/AttendanceInd
 import LeaveTypeChip from '../../../components/leave-records/LeaveTypeChip';
 import YearSelector from '../../../components/leave-records/YearSelector';
 import { Skeleton, EmptyState, ErrorState } from '../../../components/leave-records/States';
+import { FileDown, Loader } from 'lucide-react';
+import { leaveRecordService } from '../../../services/leaveRecordService';
+import { saveBlob } from '../../../services/reportService';
 
 const WeeklyReport = () => {
   const [year, setYear] = useState(new Date().getFullYear());
+  const [pdfBusy, setPdfBusy] = useState(false);
   const { data = [], isLoading, isError, error, refetch } = useWeeklySummaries(year);
+
+  const downloadPdf = async () => {
+    setPdfBusy(true);
+    try {
+      saveBlob(await leaveRecordService.reportPdf('weekly', year), `weekly-leave-report-${year}`);
+    } catch { /* the blob request failed; button re-enables */ } finally { setPdfBusy(false); }
+  };
 
   const rows = [...data].sort((a, b) => a.week_number - b.week_number);
   const chartData = rows.map((w) => ({
@@ -26,7 +37,12 @@ const WeeklyReport = () => {
           <h2>Weekly Report</h2>
           <div className="lr-page-sub">Attendance and leave by ISO week</div>
         </div>
-        <YearSelector currentYear={year} onChange={setYear} minYear={2023} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <YearSelector currentYear={year} onChange={setYear} minYear={2023} />
+          <button className="btn btn-primary" onClick={downloadPdf} disabled={pdfBusy || rows.length === 0}>
+            {pdfBusy ? <Loader size={16} className="lr-spin" /> : <FileDown size={16} />} Download PDF
+          </button>
+        </div>
       </div>
 
       {isLoading && <Skeleton rows={2} />}
@@ -84,7 +100,6 @@ const WeeklyReport = () => {
               </tbody>
             </table>
           </div>
-          <p className="lr-page-sub" style={{ marginTop: 12 }}>Export to PDF/CSV arrives in Phase 8.</p>
         </>
       )}
     </div>

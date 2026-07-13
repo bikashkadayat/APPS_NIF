@@ -35,7 +35,10 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         return User.objects.select_related('department_ref').all().order_by('username')
 
     def get_serializer_class(self):
-        if self.action == 'create':
+        # Create + edit go through the category-aware serializer so employment
+        # type / joining date / gender changes re-resolve the category and rebuild
+        # balances. List/retrieve use the read serializer.
+        if self.action in ('create', 'update', 'partial_update'):
             return AdminUserCreateSerializer
         return UserSerializer
 
@@ -116,10 +119,28 @@ class AdminStatsView(generics.GenericAPIView):
         current_year = now.year
 
         total_users = User.objects.count()
+        active_users = User.objects.filter(is_active=True).count()
         total_leaves = Leave.objects.count()
-        pending_leaves = Leave.objects.filter(status='pending').count()
+        pending_leaves = Leave.objects.filter(status__in=['pending', 'pending_hr']).count()
         approved_leaves = Leave.objects.filter(status='approved').count()
         rejected_leaves = Leave.objects.filter(status='rejected').count()
+
+        # Per-department breakdown (Phase 2.6 dashboard). Only a handful of
+        # departments, so a few small counts each is fine.
+        from leaves.models import Department
+        by_department = []
+        for d in Department.objects.filter(is_active=True).order_by('name'):
+            members = User.objects.filter(department_ref=d)
+            dept_leaves = Leave.objects.filter(user__department_ref=d, is_deleted=False)
+            by_department.append({
+                'id': str(d.id),
+                'department': d.name,
+                'code': d.code,
+                'employee_count': members.count(),
+                'active_employees': members.filter(is_active=True).count(),
+                'leave_requests': dept_leaves.count(),
+                'pending_reviews': dept_leaves.filter(status__in=['pending', 'pending_hr']).count(),
+            })
 
         recent_leaves = Leave.objects.order_by('-created_at')[:10]
         recent_leaves_data = []
@@ -136,10 +157,12 @@ class AdminStatsView(generics.GenericAPIView):
 
         return Response({
             'total_users': total_users,
+            'active_users': active_users,
             'total_leaves': total_leaves,
             'pending_leaves': pending_leaves,
             'approved_leaves': approved_leaves,
             'rejected_leaves': rejected_leaves,
+            'by_department': by_department,
             'recent_leaves': recent_leaves_data,
         })
 

@@ -38,6 +38,7 @@ const HolidayManagement = lazy(() => import('./pages/admin/leaves/HolidayManagem
 const DepartmentManagement = lazy(() => import('./pages/admin/leaves/DepartmentManagement'));
 const LeaveTypeManagement = lazy(() => import('./pages/admin/leaves/LeaveTypeManagement'));
 const BulkActions = lazy(() => import('./pages/admin/leaves/BulkActions'));
+const AttendanceReports = lazy(() => import('./pages/attendance/AttendanceReports'));
 const UserManagement = lazy(() => import('./pages/admin/users/UserManagement'));
 
 const ReportsHub = lazy(() => import('./pages/reports/ReportsHub'));
@@ -64,9 +65,10 @@ function App() {
           <Route index element={<RoleLanding />} />
           <Route path="unauthorized" element={<Unauthorized />} />
           <Route path="admin/users" element={<RequireAuth allowedRoles={['admin']}><UserManagement /></RequireAuth>} />
+          <Route path="admin/attendance-reports" element={<RequireAuth allowedRoles={['approver', 'admin']}><AttendanceReports /></RequireAuth>} />
           <Route path="profile" element={<Profile />} />
           <Route path="leave" element={<LeaveDashboard />} />
-          <Route path="leave/apply" element={<ApplyLeave />} />
+          <Route path="leave/apply" element={<RequireAuth allowedRoles={['maker', 'checker', 'approver']}><ApplyLeave /></RequireAuth>} />
           <Route path="leave/my-applications" element={<MyApplications />} />
           <Route path="leave/pending" element={<PendingApprovals />} />
           <Route path="leave/calendar" element={<TeamCalendar />} />

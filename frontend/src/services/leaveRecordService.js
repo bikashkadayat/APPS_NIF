@@ -111,6 +111,11 @@ export const leaveRecordService = {
    * @property {string} default_days_per_year @property {string} display_color
    * @returns {Promise<LeaveType[]>}
    */
+  // Self-scoped weekly/monthly leave summary PDF (NIF letterhead). Returns the
+  // full axios blob response for saveBlob().
+  reportPdf: (period, year) =>
+    api.get(`/leaves/my-report/${period}/`, { params: { year }, responseType: 'blob' }),
+
   getLeaveTypes: async () => {
     const res = await api.get('/leave-types/');
     return unwrapList(res);

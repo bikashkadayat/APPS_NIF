@@ -98,10 +98,12 @@ class MemoViewSet(viewsets.ModelViewSet):
         return MemoDetailSerializer
 
     def perform_create(self, serializer):
-        # Phase 2: any authenticated user (maker, checker, approver, admin) may
-        # create a memo — enterprise policy. Checker/approver privileges remain
-        # scoped to their workflow actions (review/approve) via object perms.
+        # Employee / Department Head / HR may create memos. Admin is an
+        # oversight/approval role and does not author personal memo requests.
         user = self.request.user
+        if user.role == User.Roles.ADMIN:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Admins oversee and approve memos; they do not create memo requests.")
         # H2: memo_number is assigned by Memo.save() via the single canonical
         # generator; do not mint it here (that was a second, divergent path).
         memo = serializer.save(
@@ -121,6 +123,10 @@ class MemoViewSet(viewsets.ModelViewSet):
         rolls back so no orphaned draft is left behind.
         """
         from django.db import transaction
+
+        if request.user.role == User.Roles.ADMIN:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Admins oversee and approve memos; they do not create memo requests.")
 
         serializer = MemoCreateSerializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)

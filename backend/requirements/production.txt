@@ -1,0 +1,14 @@
+# Production dependencies.
+#   pip install -r requirements/production.txt
+-r base.txt
+
+# WSGI application server
+gunicorn==26.0.0
+
+# Static file serving straight from Gunicorn (Brotli + gzip compression).
+whitenoise[brotli]==6.12.0
+
+# Optional: object storage for media when USE_S3=True. Not installed by default
+# because the standard deployment uses the Render persistent disk. To enable
+# S3 / Cloudflare R2 / MinIO, add to your image build:
+#   django-storages[boto3]==1.14.4

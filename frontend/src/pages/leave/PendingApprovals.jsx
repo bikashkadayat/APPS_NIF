@@ -3,19 +3,24 @@ import { useNavigate } from 'react-router-dom';
 import { useLeaves } from '../../hooks/useLeaves';
 import { useAuth } from '../../hooks/useAuth';
 import Badge from '../../components/common/Badge';
-import { ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
+import LeaveReviewModal from '../../components/leave/LeaveReviewModal';
+import { ArrowLeft, Eye } from 'lucide-react';
 
 const PendingApprovals = () => {
   const navigate = useNavigate();
-  const { leaves, loading, fetchLeaves, updateLeaveStatus } = useLeaves();
+  const { leaves, loading, error, fetchLeaves } = useLeaves();
   const { role } = useAuth();
   const [popup, setPopup] = useState(null);
+  const [reviewId, setReviewId] = useState(null);
 
   useEffect(() => {
     fetchLeaves();
   }, [fetchLeaves]);
 
-  const canApprove = role === 'approver' || role === 'admin';
+  // Both review stages can decide from this screen: Dept Head (checker) acts on
+  // Level-1 'pending' items, HR (approver) acts on Level-2 'pending_hr' items,
+  // Admin oversees both. The modal routes each decision to the right endpoint.
+  const canApprove = ['checker', 'approver', 'admin'].includes(role);
   const canReview = ['approver', 'checker', 'admin'].includes(role);
 
   if (!canReview) {
@@ -48,18 +53,20 @@ const PendingApprovals = () => {
     );
   }
 
-  const pendingLeaves = leaves.filter(l => l.status === 'pending');
+  // Show the queue that matches the reviewer's stage. HR's queue is the
+  // 'pending_hr' items (Dept Head already approved) - previously this filtered
+  // only 'pending', so HR saw an empty queue and could never approve (H1).
+  const stageStatuses = role === 'checker' ? ['pending']
+    : role === 'approver' ? ['pending_hr']
+    : ['pending', 'pending_hr']; // admin oversees both stages
+  const pendingLeaves = leaves.filter(l => stageStatuses.includes(l.status));
 
-  const handleAction = async (id, status) => {
-    try {
-      await updateLeaveStatus(id, status);
-      setPopup(status === 'approved' 
-        ? { type: 'success', title: 'Application Approved', message: `Leave request has been ${status}.` }
-        : { type: 'success', title: 'Application Rejected', message: `Leave request has been ${status}.` }
-      );
-    } catch (err) {
-      setPopup({ type: 'error', title: 'Action Failed', message: err.message || 'Failed to update leave status' });
-    }
+  const handleDecided = (status) => {
+    setReviewId(null);
+    fetchLeaves();
+    setPopup(status === 'approved'
+      ? { type: 'success', title: 'Application Approved', message: 'Leave request has been approved.' }
+      : { type: 'success', title: 'Application Rejected', message: 'Leave request has been rejected.' });
   };
 
   return (
@@ -101,6 +108,11 @@ const PendingApprovals = () => {
       
       {loading ? (
         <div>Loading pending items...</div>
+      ) : error ? (
+        <div className="empty-state">
+          <div className="empty-msg" style={{ color: 'var(--danger, #b91c1c)' }}>Could not load pending requests. {error}</div>
+          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={fetchLeaves}>Retry</button>
+        </div>
       ) : pendingLeaves.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon">✓</div>
@@ -113,7 +125,7 @@ const PendingApprovals = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', borderBottom: '1px solid var(--border-light)', paddingBottom: '16px'}}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px'}}>
                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--nepal-blue)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-                    {leave.employee.substring(0,2).toUpperCase()}
+                    {(leave.employee || '?').substring(0,2).toUpperCase()}
                    </div>
                    <div>
                      <div style={{ fontWeight: 600, fontSize: '15px'}}>{leave.employee}</div>
@@ -143,20 +155,22 @@ const PendingApprovals = () => {
               </div>
               
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', borderTop: '1px solid var(--border-light)', paddingTop: '16px'}}>
-                {canApprove ? (
-                  <>
-                    <button className="btn btn-ghost" style={{ borderColor: 'var(--nepal-red)', color: 'var(--nepal-red)'}} onClick={() => handleAction(leave.id, 'rejected')}>Reject</button>
-                    <button className="btn btn-success" onClick={() => handleAction(leave.id, 'approved')}>Approve ✓</button>
-                  </>
-                ) : (
-                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                    Approvers can review and process requests here.
-                  </div>
-                )}
+                <button className="btn btn-primary" onClick={() => setReviewId(leave.id)}>
+                  <Eye size={16} /> Review &amp; Decide
+                </button>
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {reviewId && (
+        <LeaveReviewModal
+          leaveId={reviewId}
+          canApprove={canApprove}
+          onClose={() => setReviewId(null)}
+          onDecided={handleDecided}
+        />
       )}
     </div>
   );

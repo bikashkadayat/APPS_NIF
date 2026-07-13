@@ -6,7 +6,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const TeamCalendar = () => {
   const navigate = useNavigate();
-  const { leaves, fetchLeaves } = useLeaves();
+  const { leaves, loading, error, fetchLeaves } = useLeaves();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState(null);
 
@@ -45,11 +45,13 @@ const TeamCalendar = () => {
   const days = Array.from({ length: daysInMonth }).map((_, i) => {
     const day = i + 1;
     const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+    const isSaturday = new Date(year, month, day).getDay() === 6; // Nepal weekly holiday
     const dayEvents = getEventsForDay(day);
 
     return (
-      <div key={`day-${day}`} className={`cal-day ${isToday ? 'today' : ''}`}>
+      <div key={`day-${day}`} className={`cal-day ${isToday ? 'today' : ''} ${isSaturday ? 'is-saturday' : ''}`}>
         <span className="cal-date">{day}</span>
+        {isSaturday && <span className="cal-holiday-tag">Holiday</span>}
         <div className="cal-events">
           {dayEvents.slice(0, 3).map(ev => (
             <div key={`${ev.id}-${day}`} className={`cal-event ${ev.status}`} onClick={() => setSelectedEvent(ev)}>
@@ -85,12 +87,12 @@ const TeamCalendar = () => {
       </div>
 
       <div className="table-card" style={{ padding: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button className="btn btn-ghost btn-sm" onClick={goToPrevMonth}>
               <ChevronLeft size={18} />
             </button>
-            <h3 style={{ fontFamily: '"Playfair Display", serif', fontSize: '24px', fontWeight: 700, minWidth: '200px', textAlign: 'center' }}>
+            <h3 style={{ fontFamily: '"Playfair Display", serif', fontSize: '20px', fontWeight: 700, minWidth: '130px', textAlign: 'center' }}>
               {monthNames[month]} {year}
             </h3>
             <button className="btn btn-ghost btn-sm" onClick={goToNextMonth}>
@@ -109,6 +111,14 @@ const TeamCalendar = () => {
             </div>
           </div>
         </div>
+
+        {loading && <div style={{ padding: '4px 0 12px', color: 'var(--text-muted)', fontSize: 13 }}>Loading team leave…</div>}
+        {error && (
+          <div style={{ padding: '10px 14px', marginBottom: 12, borderRadius: 8, background: 'rgba(220,38,38,.08)', color: '#b91c1c', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span>Could not load team leave data. {error}</span>
+            <button className="btn btn-ghost btn-sm" onClick={fetchLeaves}>Retry</button>
+          </div>
+        )}
 
         <div className="calendar-container">
           <div className="calendar-header">
@@ -130,7 +140,7 @@ const TeamCalendar = () => {
 
           <div className="calendar-grid">
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(h => (
-              <div key={h} className="cal-day header">{h}</div>
+              <div key={h} className={`cal-day header ${h === 'Sat' ? 'is-saturday' : ''}`}>{h}</div>
             ))}
             {blanks}
             {days}

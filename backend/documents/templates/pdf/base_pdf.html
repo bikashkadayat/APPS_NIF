@@ -14,9 +14,11 @@
   }
   /* Fonts fall back to Helvetica if the optional TTFs are not installed. */
   body { font-family: "Inter", "Poppins", Helvetica, Arial, sans-serif; color: #1f2937; font-size: 12px; line-height: 1.55; }
-  .letterhead { border-bottom: 3px solid #2563EB; padding-bottom: 12px; margin-bottom: 6px; }
-  .org-name { font-size: 20px; font-weight: 700; color: #111827; }
-  .org-meta { font-size: 10px; color: #6b7280; margin-top: 2px; }
+  .letterhead { border-bottom: 3px solid #2563EB; padding-bottom: 14px; margin-bottom: 6px; }
+  .letterhead-logo { height: 90px; width: auto; display: block; }
+  /* Larger logo, smaller balanced org name (Fix 5). */
+  .org-name { font-size: 15px; font-weight: 700; color: #111827; letter-spacing: .2px; }
+  .org-meta { font-size: 9px; color: #6b7280; margin-top: 3px; }
   .doc-meta { text-align: right; font-size: 10px; color: #6b7280; }
   .doc-number { font-size: 12px; font-weight: 700; color: #2563EB; }
   h1.title { font-size: 17px; margin: 18px 0 4px; color: #111827; }
@@ -38,14 +40,18 @@
 </style>
 </head>
 <body>
-  <table style="width:100%"><tr>
-    <td class="letterhead" style="border:none;">
+  <table style="width:100%" class="letterhead"><tr>
+    <td style="border:none; width:105px; vertical-align:middle; padding:0;">
+      {% if logo %}<img src="{{ logo }}" alt="Nepal Internet Foundation logo" class="letterhead-logo">{% endif %}
+    </td>
+    <td style="border:none; vertical-align:middle; padding:0 0 0 14px;">
       <div class="org-name">{{ org.name }}</div>
       <div class="org-meta">{{ org.address }} · Tel: {{ org.tel }} · {{ org.email }} · {{ org.website }}</div>
     </td>
-    <td class="doc-meta" style="border-bottom:3px solid #2563EB;padding-bottom:12px;">
+    <td class="doc-meta" style="border:none; vertical-align:middle;">
       <div class="doc-number">{{ document_number }}</div>
-      <div>Date: {{ issue_date }}</div>
+      <div>Date (BS): {{ issue_date_bs }}</div>
+      <div>Date (AD): {{ issue_date }}</div>
     </td>
   </tr></table>
 

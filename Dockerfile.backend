@@ -1,38 +1,52 @@
-FROM python:3.10-slim
+# Pinned base image (Debian bookworm) - no floating tags, reproducible builds.
+FROM python:3.10-slim-bookworm
+
+# No .pyc files, unbuffered stdout (real-time container logs), quiet pip.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
+# RUNTIME system libraries only (no compilers/build tools - every Python
+# dependency ships a manylinux wheel):
+#   cron                              - scheduled jobs
+#   libcairo2/pango/gdk-pixbuf/mime   - weasyprint PDF rendering
+#   libmagic1                         - python-magic mime sniffing
+#   postgresql-client                 - occasional DB ops / psql on the shell
+RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
     postgresql-client \
-    # weasyprint PDF rendering (cairo/pango) + mime detection
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-2.0-0 \
     shared-mime-info \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# Install pinned Python deps first for better layer caching.
+COPY backend/requirements/ ./requirements/
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements/production.txt
 
 # Copy backend code
 COPY backend/ .
 
-# Environment variables for database and Django
-ENV DATABASE_HOST=db
-ENV DATABASE_PORT=5432
-ENV DATABASE_NAME=leave_system
-ENV DATABASE_USER=leave_user
-ENV DATABASE_PASSWORD=leave_password_123
-ENV DJANGO_SECRET_KEY=change-this-to-a-secure-random-key-in-production
-ENV DJANGO_DEBUG=False
-
-# Expose Django port
+# No secrets or environment-specific config are baked into the image; every
+# value (SECRET_KEY, DB credentials, hosts) is injected at runtime by
+# docker-compose / Render. settings.py fails fast if a required secret is missing.
 EXPOSE 8000
 
-# Collect static files and start server with gunicorn
-CMD python manage.py migrate --noinput && python manage.py collectstatic --noinput --clear && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
+# Production start: apply migrations, collect static (builds the WhiteNoise
+# manifest), then run Gunicorn. Worker count / timeout are env-tunable and
+# access + error logs stream to stdout for platform log aggregation.
+CMD python manage.py migrate --noinput && \
+    python manage.py collectstatic --noinput --clear && \
+    gunicorn config.wsgi:application \
+      --bind 0.0.0.0:8000 \
+      --workers ${GUNICORN_WORKERS:-3} \
+      --timeout ${GUNICORN_TIMEOUT:-120} \
+      --access-logfile - \
+      --error-logfile -

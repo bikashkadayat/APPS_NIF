@@ -1,0 +1,28 @@
+# Base runtime dependencies shared by every environment.
+# Pinned for reproducible builds. Regenerate versions with `pip freeze`.
+Django==5.2.16
+djangorestframework==3.17.1
+djangorestframework-simplejwt==5.5.1
+django-cors-headers==4.9.0
+django-filter==26.1
+
+# Reports / exports
+openpyxl==3.1.5
+
+# PDF generation (letterheads, certificates) + QR codes
+weasyprint==69.0
+qrcode==8.2
+
+# Image handling / uploads
+Pillow==12.3.0
+
+# Security / sanitisation
+bcrypt==5.0.0
+bleach==6.4.0
+python-magic==0.4.27
+
+# PostgreSQL driver
+psycopg2-binary==2.9.12
+
+# Bikram Sambat (BS) date conversion for official documents / approvals
+nepali-datetime==1.0.8.5

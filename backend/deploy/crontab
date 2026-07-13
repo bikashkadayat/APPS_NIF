@@ -3,22 +3,22 @@
 # %-signs must be escaped as \% inside crontabs.
 
 # 00:30 daily - refresh the current ISO week's summaries
-30 0 * * * cd /app && python manage.py recompute_summaries --scope weekly --this-week >> /app/logs/cron.log 2>&1
+30 0 * * * cd /app && python manage.py recompute_summaries --scope weekly --this-week > /proc/1/fd/1 2>/proc/1/fd/2
 
 # 01:00 daily - refresh the current month's summaries
-0 1 * * * cd /app && python manage.py recompute_summaries --scope monthly --this-month >> /app/logs/cron.log 2>&1
+0 1 * * * cd /app && python manage.py recompute_summaries --scope monthly --this-month > /proc/1/fd/1 2>/proc/1/fd/2
 
 # 02:00 daily - data integrity audit (report only; alerts on non-zero exit)
-0 2 * * * cd /app && python manage.py audit_data_integrity >> /app/logs/cron.log 2>&1
+0 2 * * * cd /app && python manage.py audit_data_integrity > /proc/1/fd/1 2>/proc/1/fd/2
 
 # 03:00 on Jan 1 - close out the year that just ended
-0 3 1 1 * cd /app && python manage.py process_year_end --year $(date -d "yesterday" +\%Y) >> /app/logs/cron.log 2>&1
+0 3 1 1 * cd /app && python manage.py process_year_end --year $(date -d "yesterday" +\%Y) > /proc/1/fd/1 2>/proc/1/fd/2
 
 # Hourly - send any scheduled reports that are due (Phase 8)
-0 * * * * cd /app && python manage.py run_scheduled_reports >> /app/logs/cron.log 2>&1
+0 * * * * cd /app && python manage.py run_scheduled_reports > /proc/1/fd/1 2>/proc/1/fd/2
 
 # 04:00 daily - purge generated report files older than the retention window
-0 4 * * * cd /app && python manage.py purge_expired_reports >> /app/logs/cron.log 2>&1
+0 4 * * * cd /app && python manage.py purge_expired_reports > /proc/1/fd/1 2>/proc/1/fd/2
 
 # Monday 09:00 - send the opt-in weekly digest email (Phase 9)
-0 9 * * 1 cd /app && python manage.py send_weekly_digest >> /app/logs/cron.log 2>&1
+0 9 * * 1 cd /app && python manage.py send_weekly_digest > /proc/1/fd/1 2>/proc/1/fd/2

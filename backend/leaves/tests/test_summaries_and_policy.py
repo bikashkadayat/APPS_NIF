@@ -18,10 +18,11 @@ def test_weekly_summary_aggregation(maker):
     )
     summary = services.recompute_weekly_summary(maker, 2026, 24)
     assert summary.approved_days == Decimal("2")
-    assert summary.working_days == 5
+    # 6 working days: Mon..Sun with only Saturday excluded (Nepal weekend).
+    assert summary.working_days == 6
     assert summary.by_type.get("SICK") == "2.0"
-    # attendance = (5 - 2) / 5 * 100
-    assert summary.attendance_percentage == Decimal("60.00")
+    # attendance = (6 - 2) / 6 * 100
+    assert summary.attendance_percentage == Decimal("66.67")
     assert leave.day_records.count() == 2
 
 

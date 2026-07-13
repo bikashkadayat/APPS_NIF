@@ -37,6 +37,9 @@ api.interceptors.response.use(
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         }).then(token => {
+          // Mark queued requests as already-retried so a second 401 on the
+          // replay does not re-enter the refresh branch (L2).
+          originalRequest._retry = true;
           originalRequest.headers.Authorization = `Bearer ${token}`;
           return api(originalRequest);
         });
@@ -55,8 +58,14 @@ api.interceptors.response.use(
 
       try {
         const response = await axios.post('/api/v1/auth/refresh/', { refresh: refreshToken });
-        const { access } = response.data;
+        const { access, refresh } = response.data;
         localStorage.setItem('accessToken', access);
+        // Refresh rotation is ON server-side (ROTATE_REFRESH_TOKENS +
+        // BLACKLIST_AFTER_ROTATION): the old refresh token is blacklisted the
+        // moment it is used, so we MUST persist the new one it returns. Dropping
+        // it left the next cycle presenting a dead token -> forced logout (C1).
+        if (refresh) localStorage.setItem('refreshToken', refresh);
+        api.defaults.headers.common.Authorization = `Bearer ${access}`;
         processQueue(null, access);
         originalRequest.headers.Authorization = `Bearer ${access}`;
         return api(originalRequest);

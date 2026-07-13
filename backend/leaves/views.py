@@ -11,17 +11,6 @@ from .models import Leave, LeaveBalance
 from .serializers import LeaveSerializer, LeaveBalanceSerializer
 
 
-def update_leave_balance(user, leave_type, year, delta):
-    balance, created = LeaveBalance.objects.get_or_create(
-        user=user,
-        leave_type=leave_type,
-        year=year,
-        defaults={'total_allocated': 0, 'used_so_far': 0}
-    )
-    balance.used_so_far = max(0, balance.used_so_far + delta)
-    balance.save()
-
-
 def get_leave_days(start_date, end_date):
     return (end_date - start_date).days + 1
 
@@ -41,22 +30,54 @@ class LeaveViewSet(viewsets.ModelViewSet):
             return base.filter(user=user)
 
         if user.role == User.Roles.CHECKER:
-            return base.filter(status=Leave.Status.PENDING)
+            # Department Head: Level-1 queue = leaves awaiting DH review, scoped
+            # to their own department when one is assigned (spec: "sees only own
+            # department"). Falls back to all-pending if no department is set.
+            qs = base.filter(status=Leave.Status.PENDING)
+            if user.department_ref_id:
+                qs = qs.filter(user__department_ref_id=user.department_ref_id)
+            return qs
 
         if user.role in [User.Roles.APPROVER, User.Roles.ADMIN]:
+            # HR / Admin: all departments (Level-2 queue is status=PENDING_HR).
             return base
 
         return Leave.objects.none()
 
     def perform_create(self, serializer):
         from users.models import User
-        if self.request.user.role not in [User.Roles.MAKER, User.Roles.ADMIN]:
-            raise PermissionDenied("Only makers can apply for leave.")
+        # Admin is an oversight/approval role and cannot apply for personal leave.
+        if self.request.user.role == User.Roles.ADMIN:
+            raise PermissionDenied("Admins manage and approve leave; they do not apply for personal leave.")
+        if self.request.user.role not in [User.Roles.MAKER, User.Roles.CHECKER, User.Roles.APPROVER]:
+            raise PermissionDenied("You are not permitted to apply for leave.")
         approver = serializer.validated_data.get('approver') if hasattr(serializer, 'validated_data') else None
-        if approver and approver.role not in [User.Roles.APPROVER, User.Roles.ADMIN]:
-            raise PermissionDenied("Invalid approver selected.")
-        serializer.save(user=self.request.user, status=Leave.Status.PENDING)
+        if approver and approver.role not in [User.Roles.CHECKER, User.Roles.APPROVER, User.Roles.ADMIN]:
+            raise PermissionDenied("Invalid reporting manager selected.")
+
+        from django.db import transaction
+        from rest_framework.exceptions import ValidationError
+        from . import category_engine
+        vd = serializer.validated_data
+        start, end, ltype = vd.get('start_date'), vd.get('end_date'), vd.get('leave_type')
+
+        # Category-aware balance guard + create in ONE transaction (M4/H4):
+        # ensure_category_balances refreshes this user's allocations from their
+        # resolved category and locks/recomputes committed days (approved + both
+        # pending stages). check_apply then validates the request against the
+        # category entitlement (working vs calendar days) or the comp ledger. The
+        # row lock is held through serializer.save(), so concurrent applications
+        # for the same type/year cannot slip past the guard.
+        with transaction.atomic():
+            if start and end:
+                category_engine.ensure_category_balances(self.request.user, start.year)
+                error = category_engine.check_apply(self.request.user, ltype, start, end)
+                if error:
+                    raise ValidationError(error)
+            serializer.save(user=self.request.user, status=Leave.Status.PENDING)
         log_action(self.request.user, AuditLog.Action.SUBMIT, instance=serializer.instance, request=self.request)
+        # Notifications (Trigger 1 -> Dept Head + HR) fire from the Leave post_save
+        # signal (notifications.signals), which covers every save path.
 
     def perform_destroy(self, instance):
         # Leaves with approved day records are soft-deleted to preserve history;
@@ -81,22 +102,139 @@ class LeaveViewSet(viewsets.ModelViewSet):
         if status_value not in valid_statuses:
             return Response({"error": "Invalid leave status."}, status=status.HTTP_400_BAD_REQUEST)
 
-        old_status = leave.status
-        leave.status = status_value
-        leave.approver = request.user
-        leave.save()
+        remarks = (request.data.get('remarks') or '').strip()
+        # A rejection must always carry a reason (spec: mandatory remark on reject).
+        if status_value == Leave.Status.REJECTED and not remarks:
+            return Response({"error": "A remark is required when rejecting a request."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        if old_status != status_value:
-            days = get_leave_days(leave.start_date, leave.end_date)
-            year = leave.start_date.year
-            if status_value == Leave.Status.APPROVED:
-                update_leave_balance(leave.user, leave.leave_type, year, days)
-            elif status_value == Leave.Status.REJECTED and old_status == Leave.Status.APPROVED:
-                update_leave_balance(leave.user, leave.leave_type, year, -days)
+        old_status = leave.status
+        # Enforce the two-stage workflow (M3): status cannot jump PENDING ->
+        # APPROVED skipping the Department Head (Level 1). Balance is derived from
+        # day records by the signal layer, so a status change here recomputes it
+        # exactly once and can never double-deduct.
+        ALLOWED_TRANSITIONS = {
+            Leave.Status.PENDING_HR: {Leave.Status.PENDING},
+            Leave.Status.APPROVED: {Leave.Status.PENDING_HR},
+            Leave.Status.REJECTED: {Leave.Status.PENDING, Leave.Status.PENDING_HR},
+        }
+        if old_status != status_value and old_status not in ALLOWED_TRANSITIONS.get(status_value, set()):
+            return Response(
+                {"error": "Invalid workflow transition. Leave follows Pending -> "
+                          "Department Head -> HR; use the staged review actions."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        from django.db import transaction
+        from django.utils import timezone
+        with transaction.atomic():
+            leave.status = status_value
+            leave.approver = request.user
+            # Record the acting reviewer + timestamp + remark for the audit timeline.
+            leave.hr_reviewer = request.user
+            leave.hr_action_date = timezone.now()
+            if remarks:
+                leave.remarks = remarks
+            leave.save()  # signal syncs day records + recomputes both balances
 
         audit_action = AuditLog.Action.APPROVE if status_value == Leave.Status.APPROVED else AuditLog.Action.REJECT if status_value == Leave.Status.REJECTED else AuditLog.Action.UPDATE
         log_action(request.user, audit_action, instance=leave, changes={'from': old_status, 'to': status_value}, request=request)
 
+        # Notifications fire from the Leave post_save signal on the status change.
+        return Response(self.get_serializer(leave).data)
+
+    @action(detail=True, methods=['post'], url_path='dept-head-review', permission_classes=[IsAuthenticated])
+    def dept_head_review(self, request, pk=None):
+        """Level-1 review by the Department Head (role=checker). approve -> PENDING_HR, reject -> REJECTED."""
+        from django.utils import timezone
+        from users.models import User
+        leave = self.get_object()
+        actor = request.user
+        if actor.role not in [User.Roles.CHECKER, User.Roles.ADMIN]:
+            raise PermissionDenied("Only a Department Head can perform the Level-1 review.")
+        if actor.id == leave.user_id:
+            raise PermissionDenied("You cannot review your own leave.")
+        if actor.role == User.Roles.CHECKER and actor.department_ref_id and leave.user.department_ref_id != actor.department_ref_id:
+            raise PermissionDenied("You can only review leave from your own department.")
+        if leave.status != Leave.Status.PENDING:
+            return Response({"error": "Leave is not awaiting Department Head review."}, status=status.HTTP_400_BAD_REQUEST)
+
+        decision = (request.data.get('decision') or '').lower()
+        remarks = request.data.get('remarks', '') or ''
+        if decision not in ('approve', 'reject'):
+            return Response({"error": "decision must be 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_status = leave.status
+        leave.department_head_reviewer = actor
+        leave.department_head_action_date = timezone.now()
+        if remarks:
+            leave.remarks = remarks
+        if decision == 'approve':
+            leave.status = Leave.Status.PENDING_HR
+            audit_action = AuditLog.Action.UPDATE
+        else:
+            leave.status = Leave.Status.REJECTED
+            audit_action = AuditLog.Action.REJECT
+        leave.save()
+        log_action(actor, audit_action, instance=leave,
+                   changes={'stage': 'department_head', 'from': old_status, 'to': leave.status, 'remarks': remarks},
+                   request=request)
+        # Notifications (Trigger 2 approve / Trigger 4 reject) fire from the Leave
+        # post_save signal on the status transition.
+        return Response(self.get_serializer(leave).data)
+
+    @action(detail=True, methods=['post'], url_path='hr-review', permission_classes=[IsApproverOrAdmin])
+    def hr_review(self, request, pk=None):
+        """Level-2 final review by HR (role=approver). approve -> APPROVED (+balance), reject -> REJECTED."""
+        from django.utils import timezone
+        leave = self.get_object()
+        actor = request.user
+        if actor.id == leave.user_id:
+            raise PermissionDenied("You cannot approve your own leave.")
+        if leave.status != Leave.Status.PENDING_HR:
+            return Response({"error": "Leave is not awaiting HR review (Department Head must approve first)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        decision = (request.data.get('decision') or '').lower()
+        remarks = request.data.get('remarks', '') or ''
+        if decision not in ('approve', 'reject'):
+            return Response({"error": "decision must be 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.db import transaction
+        from . import services
+        old_status = leave.status
+        with transaction.atomic():
+            leave.hr_reviewer = actor
+            leave.hr_action_date = timezone.now()
+            leave.approver = actor  # backward-compat: `approver` = final approver
+            if remarks:
+                leave.remarks = remarks
+            if decision == 'approve':
+                # Re-validate the balance at the final stage (H4): entitlement or
+                # other approvals may have changed since the employee applied.
+                # sync_simple_balance locks + recomputes committed days; the leave
+                # is already counted (it is pending_hr), so this is the true
+                # post-approval figure and must not exceed the allocation.
+                if leave.leave_type in services.ENTITLEMENT_CODES:
+                    bal = services.sync_simple_balance(leave.user, leave.leave_type, leave.start_date.year)
+                    if bal and bal.used_so_far > bal.total_allocated:
+                        return Response(
+                            {"error": f"Approving would exceed the {leave.leave_type.capitalize()} "
+                                      f"Leave allocation ({bal.total_allocated} day(s)); the balance "
+                                      f"changed after this leave was applied."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                leave.status = Leave.Status.APPROVED
+                leave.save()  # signal recomputes both balances (derived, no double-deduct)
+                audit_action = AuditLog.Action.APPROVE
+            else:
+                leave.status = Leave.Status.REJECTED
+                leave.save()
+                audit_action = AuditLog.Action.REJECT
+        log_action(actor, audit_action, instance=leave,
+                   changes={'stage': 'hr', 'from': old_status, 'to': leave.status, 'remarks': remarks},
+                   request=request)
+        # Notifications (Trigger 3 -> employee) fire from the Leave post_save signal.
         return Response(self.get_serializer(leave).data)
 
     def _leave_pdf_context(self, leave, document_number):
@@ -170,7 +308,15 @@ class LeaveBalanceView(views.APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        balances = LeaveBalance.objects.filter(user=request.user)
+        from django.utils import timezone
+        from . import category_engine
+        # Self-healing + category-aware: re-resolve the user's category (auto-
+        # promotes as service crosses thresholds) and generate this year's
+        # allocation rows from the DB entitlement matrix, so balances are never
+        # empty and always reflect the user's current category.
+        year = timezone.localdate().year
+        category_engine.ensure_category_balances(request.user, year)
+        balances = LeaveBalance.objects.filter(user=request.user, year=year)
         serializer = LeaveBalanceSerializer(balances, many=True)
         return Response(serializer.data)
 
@@ -182,6 +328,144 @@ class LeaveCalendarView(views.APIView):
         leaves = Leave.objects.filter(status=Leave.Status.APPROVED)
         serializer = LeaveSerializer(leaves, many=True)
         return Response(serializer.data)
+
+
+class MyEntitlementsView(views.APIView):
+    """
+    GET /api/v1/leaves/my-entitlements/ - category-aware balance view for the
+    dashboard: resolved category + service, one card per applicable leave type
+    (with total/used/remaining), and the compensatory ledger summary.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.utils import timezone
+        from . import category_engine
+        user = request.user
+        year = timezone.localdate().year
+
+        category, flag = category_engine.resolve_and_cache(user)
+        category_engine.ensure_category_balances(user, year)
+
+        rules = {r.leave_type.code.upper(): r for r in category_engine.entitlements_for_user(user)}
+        balances = {b.leave_type: b for b in LeaveBalance.objects.filter(user=user, year=year)}
+
+        cards = []
+        for code in category_engine.BALANCE_LEAVE_CODES:
+            rule = rules.get(code)
+            if rule is None:
+                continue  # not applicable to this user (e.g. maternity for interns)
+            bal = balances.get(code.lower())
+            total = float(bal.total_allocated) if bal else float(rule.entitlement_days)
+            used = float(bal.used_so_far) if bal else 0.0
+            cards.append({
+                "code": code.lower(),
+                "name": rule.leave_type.name,
+                "color": rule.leave_type.display_color,
+                "total": total,
+                "used": used,
+                "remaining": max(0.0, total - used),
+                "is_working_day_based": rule.is_working_day_based,
+            })
+
+        comp = category_engine.comp_summary(user)
+        comp_applicable = "COMPENSATORY" in rules
+        return Response({
+            "category": category,
+            "category_label": user.get_leave_category_display() if category else None,
+            "category_flag": flag,
+            "employment_type": user.employment_type,
+            "employment_type_label": user.get_employment_type_display(),
+            "service_label": category_engine.service_label(user.date_of_joining),
+            "service_months": category_engine.service_months(user.date_of_joining),
+            "balances": cards,
+            "compensatory": {
+                "applicable": comp_applicable,
+                "earned": float(comp["earned"]),
+                "used": float(comp["used"]),
+                "available": float(comp["available"]),
+                "pending": float(comp["pending"]),
+            },
+            "applicable_types": category_engine.applicable_type_codes(user),
+        })
+
+
+class HRCategoryReviewView(views.APIView):
+    """GET /api/v1/leaves/hr/category-review/ - users whose category resolution
+    raised a flag (fallback / auto-transition / missing data), for HR to action."""
+    permission_classes = [IsApproverOrAdmin]
+
+    def get(self, request):
+        from . import category_engine
+        rows = []
+        for user in User.objects.filter(is_active=True).exclude(category_flag__isnull=True).exclude(category_flag=""):
+            category_engine.resolve_and_cache(user)
+            if not user.category_flag:
+                continue
+            rows.append({
+                "id": str(user.id),
+                "name": user.get_full_name() or user.username,
+                "employee_id": user.employee_id,
+                "employment_type": user.employment_type,
+                "employment_type_label": user.get_employment_type_display(),
+                "leave_category": user.leave_category,
+                "category_label": user.get_leave_category_display() if user.leave_category else None,
+                "service_label": category_engine.service_label(user.date_of_joining),
+                "flag": user.category_flag,
+            })
+        return Response({"count": len(rows), "results": rows})
+
+
+class CompensatoryView(views.APIView):
+    """
+    GET  /api/v1/leaves/compensatory/            - my ledger + summary
+    POST /api/v1/leaves/compensatory/            - HR manual grant (approver/admin)
+         body: {user_id, days, source_date, note}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from . import category_engine
+        from .models import CompensatoryLedger
+        entries = CompensatoryLedger.objects.filter(user=request.user)[:100]
+        return Response({
+            "summary": {k: float(v) for k, v in category_engine.comp_summary(request.user).items()},
+            "entries": [{
+                "id": str(e.id), "entry_type": e.entry_type, "days": float(e.days),
+                "source": e.source, "status": e.status,
+                "source_date": e.source_date, "note": e.note,
+                "created_at": e.created_at,
+            } for e in entries],
+        })
+
+    def post(self, request):
+        from django.utils import timezone
+        from .models import CompensatoryLedger
+        actor = request.user
+        if actor.role not in [User.Roles.APPROVER, User.Roles.ADMIN]:
+            raise PermissionDenied("Only HR or Admin can grant compensatory days.")
+        user_id = request.data.get("user_id")
+        try:
+            target = User.objects.get(pk=user_id)
+        except (User.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            days = float(request.data.get("days", 1))
+        except (TypeError, ValueError):
+            return Response({"detail": "days must be a number."}, status=status.HTTP_400_BAD_REQUEST)
+        if days <= 0:
+            return Response({"detail": "days must be positive."}, status=status.HTTP_400_BAD_REQUEST)
+
+        entry = CompensatoryLedger.objects.create(
+            user=target, entry_type=CompensatoryLedger.EntryType.EARN,
+            days=days, source=CompensatoryLedger.Source.HR_GRANT,
+            status=CompensatoryLedger.Status.CONFIRMED,  # HR grants are authoritative
+            source_date=request.data.get("source_date") or timezone.localdate(),
+            approved_by=actor, note=(request.data.get("note") or "")[:255],
+        )
+        log_action(actor, AuditLog.Action.CREATE, instance=entry,
+                   changes={"event": "COMP_GRANT", "user": str(target.id), "days": days}, request=request)
+        return Response({"id": str(entry.id), "detail": "Compensatory days granted."}, status=status.HTTP_201_CREATED)
 
 
 # ===========================================================================
@@ -219,6 +503,53 @@ def _is_privileged(user):
     return user.role in [User.Roles.ADMIN, User.Roles.CHECKER, User.Roles.APPROVER]
 
 
+def _dept_scope_q(user, prefix="user__"):
+    """Q limiting a queryset to `user`'s own department (via department_ref, then
+    the legacy department string; falls back to self if no department is set)."""
+    if user.department_ref_id:
+        return Q(**{f"{prefix}department_ref_id": user.department_ref_id})
+    if user.department:
+        return Q(**{f"{prefix}department__iexact": user.department})
+    return Q(**{f"{prefix}id": user.id})
+
+
+def scope_records(user, qs, prefix="user__"):
+    """
+    Scope a per-user queryset to what `user` is allowed to see (M7):
+      * Admin / HR (approver) -> org-wide (unchanged),
+      * Dept Head (checker)   -> OWN department only,
+      * everyone else         -> self only.
+    `prefix` is the relation path to the owning user ("user__" for record tables,
+    "" when the queryset is the User model itself). Consistent with
+    LeaveViewSet.get_queryset and AttendanceListView.
+    """
+    if user.role in (User.Roles.ADMIN, User.Roles.APPROVER):
+        return qs
+    if user.role == User.Roles.CHECKER:
+        return qs.filter(_dept_scope_q(user, prefix))
+    field = prefix[:-2] if prefix.endswith("__") else prefix
+    return qs.filter(**{(field or "id"): (user if field else user.id)})
+
+
+def can_view_user(requester, target_id):
+    """Whether `requester` may target another user's records via ?user_id. Admin/HR:
+    anyone; Dept Head: same department; others: only themselves. No data leak on a
+    cross-department id (caller should 403)."""
+    if str(requester.id) == str(target_id):
+        return True
+    if requester.role in (User.Roles.ADMIN, User.Roles.APPROVER):
+        return True
+    if requester.role == User.Roles.CHECKER:
+        target = User.objects.filter(pk=target_id).first()
+        if target is None:
+            return False
+        if requester.department_ref_id and target.department_ref_id == requester.department_ref_id:
+            return True
+        if requester.department and (target.department or "").lower() == requester.department.lower():
+            return True
+    return False
+
+
 class LeaveTypeViewSet(drf_viewsets.ReadOnlyModelViewSet):
     """Active leave types for all authenticated users (admin CRUD lives in admin_views)."""
     permission_classes = [IsAuthenticated]
@@ -248,10 +579,12 @@ class LeaveDayRecordViewSet(drf_viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = LeaveDayRecord.objects.select_related("leave_type", "user")
-        if not _is_privileged(user):
-            qs = qs.filter(user=user)
-        elif self.request.query_params.get("user_id"):
-            qs = qs.filter(user_id=self.request.query_params["user_id"])
+        qs = scope_records(user, qs)  # M7: checker limited to own department
+        target = self.request.query_params.get("user_id")
+        if target:
+            if not can_view_user(user, target):
+                raise PermissionDenied("You may only view records for your own department.")
+            qs = qs.filter(user_id=target)
         start = self.request.query_params.get("start")
         end = self.request.query_params.get("end")
         if start:
@@ -284,11 +617,12 @@ class WeeklyLeaveSummaryViewSet(drf_viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = WeeklyLeaveSummary.objects.all()
-        if not _is_privileged(user):
-            qs = qs.filter(user=user)
-        elif self.request.query_params.get("user_id"):
-            qs = qs.filter(user_id=self.request.query_params["user_id"])
+        qs = scope_records(user, WeeklyLeaveSummary.objects.all())  # M7
+        target = self.request.query_params.get("user_id")
+        if target:
+            if not can_view_user(user, target):
+                raise PermissionDenied("You may only view records for your own department.")
+            qs = qs.filter(user_id=target)
         for field in ("year", "week_number"):
             value = self.request.query_params.get(field)
             if value:
@@ -302,11 +636,12 @@ class MonthlyLeaveSummaryViewSet(drf_viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = MonthlyLeaveSummary.objects.all()
-        if not _is_privileged(user):
-            qs = qs.filter(user=user)
-        elif self.request.query_params.get("user_id"):
-            qs = qs.filter(user_id=self.request.query_params["user_id"])
+        qs = scope_records(user, MonthlyLeaveSummary.objects.all())  # M7
+        target = self.request.query_params.get("user_id")
+        if target:
+            if not can_view_user(user, target):
+                raise PermissionDenied("You may only view records for your own department.")
+            qs = qs.filter(user_id=target)
         for field in ("year", "month"):
             value = self.request.query_params.get(field)
             if value:
@@ -346,12 +681,12 @@ class LeaveCalendarRecordsView(APIView):
 
     def get(self, request):
         user = request.user
-        qs = LeaveDayRecord.objects.select_related("leave_type", "user")
+        qs = scope_records(user, LeaveDayRecord.objects.select_related("leave_type", "user"))  # M7
         target = request.query_params.get("user_id")
-        if _is_privileged(user) and target:
+        if target:
+            if not can_view_user(user, target):
+                raise PermissionDenied("You may only view records for your own department.")
             qs = qs.filter(user_id=target)
-        else:
-            qs = qs.filter(user=user)
         start = request.query_params.get("start")
         end = request.query_params.get("end")
         if start:
@@ -382,6 +717,10 @@ class TeamAttendanceView(APIView):
             return Response({"detail": "month must be YYYY-MM."}, status=status.HTTP_400_BAD_REQUEST)
 
         members = User.objects.filter(is_active=True)
+        # M7: a Dept Head only ever sees their own department, regardless of the
+        # ?department param. HR/Admin may filter across all departments.
+        if request.user.role == User.Roles.CHECKER:
+            members = members.filter(_dept_scope_q(request.user, prefix=""))
         if dept_code:
             members = members.filter(
                 Q(department_ref__code__iexact=dept_code) | Q(department__iexact=dept_code)
@@ -437,3 +776,72 @@ class YearEndCarryForwardView(APIView):
             services.process_year_end_carry_forward(member, year, actor=request.user)
             processed += 1
         return Response({"year": year, "users_processed": processed})
+
+
+class MyLeaveReportView(APIView):
+    """
+    GET /api/v1/leaves/my-report/<period>/?year=YYYY
+    Self-scoped PDF of the caller's weekly or monthly leave summaries, rendered
+    with the NIF letterhead. period in {'weekly','monthly'}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, period):
+        from django.conf import settings
+        from django.http import HttpResponse
+        from django.utils import timezone
+        from calendar import month_name
+        from documents.pdf import logo_data_uri, render_pdf
+        from config.nepali_dates import to_bs
+
+        if period not in ("weekly", "monthly"):
+            return Response({"detail": "period must be 'weekly' or 'monthly'."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        year = int(request.query_params.get("year", timezone.localdate().year))
+        rows, totals = [], {"working": 0, "approved": 0.0, "pending": 0.0}
+
+        if period == "weekly":
+            qs = WeeklyLeaveSummary.objects.filter(user=user, year=year).order_by("week_number")
+            for s in qs:
+                rows.append({
+                    "label": f"Week {s.week_number}",
+                    "sub": f"{s.week_start_date} – {s.week_end_date}",
+                    "working": s.working_days, "approved": float(s.approved_days),
+                    "pending": float(s.pending_days), "attendance": float(s.attendance_percentage),
+                })
+                totals["working"] += s.working_days
+                totals["approved"] += float(s.approved_days)
+                totals["pending"] += float(s.pending_days)
+        else:
+            qs = MonthlyLeaveSummary.objects.filter(user=user, year=year).order_by("month")
+            for s in qs:
+                rows.append({
+                    "label": month_name[s.month], "sub": str(year),
+                    "working": s.working_days, "approved": float(s.approved_days),
+                    "pending": float(s.pending_days), "attendance": float(s.attendance_percentage),
+                })
+                totals["working"] += s.working_days
+                totals["approved"] += float(s.approved_days)
+                totals["pending"] += float(s.pending_days)
+
+        now = timezone.localtime(timezone.now())
+        ctx = {
+            "logo": logo_data_uri(),
+            "org": getattr(settings, "ORG_INFO", {}),
+            "report_title": f"{period.capitalize()} Leave Report",
+            "period_label": str(year),
+            "employee_name": user.get_full_name() or user.username,
+            "employee_id": user.employee_id or "—",
+            "department": user.department_name or "—",
+            "generated_ad": now.strftime("%Y-%m-%d %H:%M"),
+            "generated_bs": to_bs(now.date()) or "—",
+            "is_weekly": period == "weekly",
+            "rows": rows,
+            "totals": totals,
+        }
+        pdf = render_pdf("pdf/leave_summary_report.html", ctx)
+        resp = HttpResponse(pdf, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{period}-leave-report-{year}.pdf"'
+        return resp

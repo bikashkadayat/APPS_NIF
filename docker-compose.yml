@@ -1,20 +1,21 @@
-version: '3.8'
-
+# Local development stack. Secrets come from the gitignored .env file
+# (see .env.example). `${VAR:?message}` makes compose refuse to start if a
+# required secret is missing - no hardcoded credentials.
 services:
   # PostgreSQL Database
   db:
     image: postgres:14-alpine
     container_name: nif-db
     environment:
-      POSTGRES_DB: leave_system
-      POSTGRES_USER: leave_user
-      POSTGRES_PASSWORD: leave_password_123
+      POSTGRES_DB: ${DATABASE_NAME:-leave_system}
+      POSTGRES_USER: ${DATABASE_USER:-leave_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5434:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U leave_user -d leave_system"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-leave_user} -d ${DATABASE_NAME:-leave_system}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -30,11 +31,23 @@ services:
     environment:
       - DATABASE_HOST=db
       - DATABASE_PORT=5432
-      - DATABASE_NAME=leave_system
-      - DATABASE_USER=leave_user
-      - DATABASE_PASSWORD=leave_password_123
-      - DJANGO_SECRET_KEY=change-this-to-a-secure-random-key-in-production
-      - DJANGO_DEBUG=False
+      - DATABASE_ENGINE=${DATABASE_ENGINE:-postgresql}
+      - DATABASE_NAME=${DATABASE_NAME:-leave_system}
+      - DATABASE_USER=${DATABASE_USER:-leave_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      # Local runs over plain HTTP: disable HTTPS-only enforcement so the app is
+      # reachable at http://localhost while keeping DEBUG=False (prod-like).
+      - DJANGO_SECURE_SSL_REDIRECT=False
+      - DJANGO_SESSION_COOKIE_SECURE=False
+      - DJANGO_CSRF_COOKIE_SECURE=False
+      - DJANGO_SECURE_HSTS_SECONDS=0
+      - DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:5173,http://localhost:8001
+      # Local dev is mail-less: console backend prints emails instead of sending.
+      # Real production sets EMAIL_BACKEND=...smtp.EmailBackend + EMAIL_HOST* env.
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
     depends_on:
       db:
         condition: service_healthy
@@ -46,7 +59,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # Scheduled jobs (Phase 5) - same image as backend, runs cron in the foreground.
+  # Scheduled jobs - same image as backend, runs cron in the foreground.
   cron:
     build:
       context: .
@@ -55,11 +68,13 @@ services:
     environment:
       - DATABASE_HOST=db
       - DATABASE_PORT=5432
-      - DATABASE_NAME=leave_system
-      - DATABASE_USER=leave_user
-      - DATABASE_PASSWORD=leave_password_123
-      - DJANGO_SECRET_KEY=change-this-to-a-secure-random-key-in-production
-      - DJANGO_DEBUG=False
+      - DATABASE_ENGINE=${DATABASE_ENGINE:-postgresql}
+      - DATABASE_NAME=${DATABASE_NAME:-leave_system}
+      - DATABASE_USER=${DATABASE_USER:-leave_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
     depends_on:
       db:
         condition: service_healthy
@@ -72,7 +87,7 @@ services:
                crontab /app/deploy/crontab &&
                cron -f"
 
-  # React Frontend (Vite)
+  # React Frontend (Vite dev server)
   frontend:
     build:
       context: .
@@ -81,7 +96,11 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_URL=http://localhost:8001
+      # Vite's dev-server proxy runs INSIDE this container, so it must reach the
+      # backend by its compose service name, not the host port mapping. (The
+      # browser still calls /api/v1 same-origin on :5173; only the proxy target
+      # matters here. "backend" is in the backend's DJANGO_ALLOWED_HOSTS.)
+      - VITE_API_URL=http://backend:8000
     depends_on:
       - backend
     volumes:

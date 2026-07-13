@@ -5,13 +5,22 @@ const leaveTypeMap = {
   'Annual Leave': 'annual',
   'Sick Leave': 'sick',
   'Casual Leave': 'casual',
+  'Maternity Leave': 'maternity',
+  'Paternity Leave': 'paternity',
+  'Compensatory Leave': 'compensatory',
 };
 
 const apiToUiType = {
   annual: 'Annual Leave',
   sick: 'Sick Leave',
   casual: 'Casual Leave',
+  maternity: 'Maternity Leave',
+  paternity: 'Paternity Leave',
+  compensatory: 'Compensatory Leave',
 };
+
+// UI label for a backend leave-type code (used to build category-limited menus).
+export const leaveTypeLabel = (code) => apiToUiType[code] || code;
 
 const calculateDays = (start, end) => {
   const d1 = new Date(start);
@@ -22,6 +31,7 @@ const calculateDays = (start, end) => {
 
 const mapLeave = (leave) => ({
   id: leave.id,
+  userId: leave.user,               // owner id — for robust self-filtering
   employee: leave.user_name || 'Unknown',
   type: apiToUiType[leave.leave_type] || leave.leave_type || 'Annual Leave',
   start: leave.start_date,
@@ -58,6 +68,9 @@ export const leaveService = {
     return { data: response.data };
   },
 
+  // Category-aware entitlement view for the dashboard (cards + comp + category).
+  getEntitlements: async () => (await api.get('/leaves/my-entitlements/')).data,
+
   create: async (data, employeeName) => {
     const response = await api.post('/leaves/', toBackendPayload(data));
     const leave = mapLeave(response.data);
@@ -65,8 +78,27 @@ export const leaveService = {
     return { data: leave };
   },
 
-  updateStatus: async (id, status) => {
-    const response = await api.post(`/leaves/${encodeURIComponent(id)}/set_status/`, { status });
+  updateStatus: async (id, status, remarks = '') => {
+    const response = await api.post(`/leaves/${encodeURIComponent(id)}/set_status/`, { status, remarks });
     return { data: mapLeave(response.data) };
-  }
+  },
+
+  // Two-stage review. Routes to the correct backend endpoint based on the leave's
+  // CURRENT status so the workflow is enforced end-to-end:
+  //   pending    -> Department Head (Level 1): approve => pending_hr, reject
+  //   pending_hr -> HR (Level 2):              approve => approved (+balance), reject
+  // `status` is the UI decision ('approved' | 'rejected').
+  reviewLeave: async (id, currentStatus, status, remarks = '') => {
+    const decision = status === 'approved' ? 'approve' : 'reject';
+    const path = currentStatus === 'pending_hr' ? 'hr-review' : 'dept-head-review';
+    const response = await api.post(`/leaves/${encodeURIComponent(id)}/${path}/`, { decision, remarks });
+    return { data: mapLeave(response.data) };
+  },
+
+  // Full, un-mapped detail for the review panel (employee id, BS dates,
+  // balance, timeline, etc.). Kept raw so the modal sees every enriched field.
+  getById: async (id) => {
+    const response = await api.get(`/leaves/${encodeURIComponent(id)}/`);
+    return response.data;
+  },
 };

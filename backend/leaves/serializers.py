@@ -15,14 +15,112 @@ class LeaveBalanceSerializer(serializers.ModelSerializer):
 class LeaveSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     approver_name = serializers.CharField(source='approver.get_full_name', read_only=True)
+    # Phase 2.6: two-stage review trail (read-only; set by workflow endpoints).
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    department_head_name = serializers.CharField(source='department_head_reviewer.get_full_name', read_only=True)
+    hr_name = serializers.CharField(source='hr_reviewer.get_full_name', read_only=True)
+    department_name = serializers.CharField(source='user.department_name', read_only=True)
+    # Detailed-review payload: everything an approver needs to decide, so no one
+    # approves blind. All read-only / computed - no new DB columns.
+    employee_id = serializers.CharField(source='user.employee_id', read_only=True)
+    total_days = serializers.SerializerMethodField()
+    remaining_balance = serializers.SerializerMethodField()
+    documents = serializers.SerializerMethodField()
+    timeline = serializers.SerializerMethodField()
+    start_date_bs = serializers.SerializerMethodField()
+    end_date_bs = serializers.SerializerMethodField()
+    created_at_bs = serializers.SerializerMethodField()
 
     class Meta:
         model = Leave
         fields = [
-            'id', 'user', 'user_name', 'leave_type', 'start_date', 'end_date',
-            'reason', 'handover_notes', 'status', 'approver', 'approver_name', 'created_at'
+            'id', 'user', 'user_name', 'employee_id', 'department_name', 'leave_type',
+            'start_date', 'start_date_bs', 'end_date', 'end_date_bs', 'total_days',
+            'reason', 'handover_notes', 'status', 'status_display', 'approver', 'approver_name',
+            'department_head_reviewer', 'department_head_name', 'department_head_action_date',
+            'hr_reviewer', 'hr_name', 'hr_action_date', 'remarks',
+            'remaining_balance', 'documents', 'timeline', 'created_at', 'created_at_bs',
         ]
-        read_only_fields = ['status', 'user']
+        read_only_fields = [
+            'status', 'user', 'department_head_reviewer', 'department_head_action_date',
+            'hr_reviewer', 'hr_action_date', 'remarks',
+        ]
+
+    def get_total_days(self, obj):
+        try:
+            return (obj.end_date - obj.start_date).days + 1
+        except Exception:
+            return None
+
+    def get_remaining_balance(self, obj):
+        bal = LeaveBalance.objects.filter(
+            user=obj.user, leave_type=obj.leave_type, year=obj.start_date.year
+        ).first()
+        if not bal:
+            return None
+        return {
+            'year': bal.year,
+            'total_allocated': bal.total_allocated,
+            'used_so_far': bal.used_so_far,
+            'remaining': max(0, bal.total_allocated - bal.used_so_far),
+        }
+
+    def get_documents(self, obj):
+        # Leaves currently carry no file attachments; returned for a stable UI
+        # contract (the panel shows "None"). Wire real uploads here when added.
+        return []
+
+    def _bs(self, value):
+        from config.nepali_dates import to_bs
+        return to_bs(value)
+
+    def get_start_date_bs(self, obj):
+        return self._bs(obj.start_date)
+
+    def get_end_date_bs(self, obj):
+        return self._bs(obj.end_date)
+
+    def get_created_at_bs(self, obj):
+        return self._bs(obj.created_at)
+
+    def get_timeline(self, obj):
+        """Ordered approval timeline: Employee -> Department Head -> HR."""
+        from config.nepali_dates import to_bs
+
+        def stage(label, actor, when, state, remarks=''):
+            name = (actor.get_full_name() or actor.username) if actor else None
+            return {
+                'stage': label,
+                'name': name,
+                'date_ad': when.isoformat() if when else None,
+                'date_bs': to_bs(when) if when else None,
+                'status': state,
+                'remarks': remarks or '',
+            }
+
+        applicant = obj.user
+        steps = [stage('Employee', applicant, obj.created_at, 'submitted')]
+
+        if obj.department_head_reviewer_id or obj.status in (
+            Leave.Status.PENDING_HR, Leave.Status.APPROVED, Leave.Status.REJECTED
+        ):
+            dh_state = 'approved' if (obj.department_head_action_date or obj.status in (
+                Leave.Status.PENDING_HR, Leave.Status.APPROVED)) else 'pending'
+            if obj.status == Leave.Status.REJECTED and not obj.hr_action_date:
+                dh_state = 'rejected'
+            steps.append(stage('Department Head', obj.department_head_reviewer,
+                               obj.department_head_action_date, dh_state, obj.remarks))
+        else:
+            steps.append(stage('Department Head', None, None, 'pending'))
+
+        hr_state = 'pending'
+        if obj.status == Leave.Status.APPROVED:
+            hr_state = 'approved'
+        elif obj.status == Leave.Status.REJECTED and obj.hr_action_date:
+            hr_state = 'rejected'
+        steps.append(stage('HR', obj.hr_reviewer, obj.hr_action_date, hr_state,
+                          obj.remarks if obj.hr_action_date else ''))
+        return steps
 
     def validate(self, data):
         if data['start_date'] > data['end_date']:
@@ -30,8 +128,8 @@ class LeaveSerializer(serializers.ModelSerializer):
         if 'approver' in data and data['approver']:
             try:
                 approver = User.objects.get(id=data['approver'].id if hasattr(data['approver'], 'id') else data['approver'])
-                if approver.role not in [User.Roles.APPROVER, User.Roles.ADMIN]:
-                    raise serializers.ValidationError("Approver must have approver or admin role.")
+                if approver.role not in [User.Roles.CHECKER, User.Roles.APPROVER, User.Roles.ADMIN]:
+                    raise serializers.ValidationError("Reporting manager must be a Department Head, HR, or Admin.")
             except User.DoesNotExist:
                 raise serializers.ValidationError("Selected approver does not exist.")
         return data

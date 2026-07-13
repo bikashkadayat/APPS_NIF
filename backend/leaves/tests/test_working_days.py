@@ -10,9 +10,9 @@ from .conftest import MONDAY
 
 @pytest.mark.django_db
 def test_calculate_working_days_skips_weekend():
-    # Monday..Sunday inclusive => 5 working days.
+    # Monday..Sunday inclusive => 6 working days (only Saturday is a weekend in Nepal).
     result = services.calculate_working_days(MONDAY, MONDAY + timedelta(days=6))
-    assert result == Decimal("5.0")
+    assert result == Decimal("6.0")
 
 
 @pytest.mark.django_db

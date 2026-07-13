@@ -12,6 +12,8 @@ export const userMgmtService = {
   deactivate: async (id) => (await api.post(`/users/admin/users/${id}/deactivate/`, {})).data,
   activate: async (id) => (await api.post(`/users/admin/users/${id}/activate/`, {})).data,
   changeRole: async (id, role) => (await api.post(`/users/admin/users/${id}/change-role/`, { role })).data,
+  // Active departments for the employee-creation dropdown.
+  departments: async () => unwrap(await api.get('/leaves/admin/departments/')),
 };
 
 export default userMgmtService;
