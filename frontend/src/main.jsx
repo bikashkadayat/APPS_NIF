@@ -5,12 +5,15 @@ import App from './App.jsx';
 import { AuthProvider } from './hooks/useAuth.jsx';
 import './index.css';
 
-// Phase 6: standardize data fetching on React Query (cache + revalidate).
+// Data fetching on React Query (cache + revalidate). Tuned for cross-account
+// freshness: short stale window + refetch when the tab/window regains focus or
+// the network reconnects, so switching back to a tab pulls fresh data.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 60_000,
-      refetchOnWindowFocus: false,
+      staleTime: 15_000,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
       retry: 1,
     },
   },

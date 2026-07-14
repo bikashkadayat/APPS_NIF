@@ -1,0 +1,161 @@
+# Production stack (self-hosted VPS). Terminates TLS at the bundled Caddy proxy,
+# serves the pre-built SPA, and proxies the API to Gunicorn. Everything sensitive
+# — secrets, security flags, SMTP, public URLs — comes from the gitignored .env
+# (see .env.example). Nothing sensitive is hardcoded here.
+#
+#   Prod:  docker compose -f docker-compose.prod.yml up -d --build
+#   Dev:   docker compose up            (docker-compose.yml — local HTTP stack)
+services:
+  # PostgreSQL Database (internal only — not published to the host in prod).
+  db:
+    image: postgres:14-alpine
+    container_name: nif-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-leave_system}
+      POSTGRES_USER: ${DATABASE_USER:-leave_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-leave_user} -d ${DATABASE_NAME:-leave_system}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Django API (Gunicorn). Built from the image — no source bind-mount in prod.
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: nif-backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_HOST=db
+      - DATABASE_PORT=5432
+      - DATABASE_ENGINE=${DATABASE_ENGINE:-postgresql}
+      - DATABASE_NAME=${DATABASE_NAME:-leave_system}
+      - DATABASE_USER=${DATABASE_USER:-leave_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      # Your domain must be listed; localhost/127.0.0.1 are appended for the
+      # in-container healthcheck (which calls http://localhost:8000).
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:?set DJANGO_ALLOWED_HOSTS to your domain in .env},localhost,127.0.0.1
+      # --- HTTPS / security hardening (secure by default; override via .env) ---
+      # Behind Caddy's TLS proxy: keep these ON. settings.py reads X-Forwarded-Proto.
+      - DJANGO_SECURE_SSL_REDIRECT=${DJANGO_SECURE_SSL_REDIRECT:-True}
+      - DJANGO_SESSION_COOKIE_SECURE=${DJANGO_SESSION_COOKIE_SECURE:-True}
+      - DJANGO_CSRF_COOKIE_SECURE=${DJANGO_CSRF_COOKIE_SECURE:-True}
+      - DJANGO_SECURE_HSTS_SECONDS=${DJANGO_SECURE_HSTS_SECONDS:-31536000}
+      # Exact HTTPS origin(s) for admin / session CSRF — from .env, no localhost.
+      - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS:?set DJANGO_CSRF_TRUSTED_ORIGINS to https://your-domain in .env}
+      # --- Public URLs (email action links + PDF QR verification) ---
+      - FRONTEND_URL=${FRONTEND_URL:?set FRONTEND_URL to https://your-domain in .env}
+      - SITE_URL=${SITE_URL:?set SITE_URL to https://your-domain in .env}
+      # --- Email / SMTP (all forwarded; settings.py fails fast if SMTP is
+      #     selected but host/user/password are empty) ---
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+      - EMAIL_HOST=${EMAIL_HOST:-}
+      - EMAIL_PORT=${EMAIL_PORT:-587}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER:-}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD:-}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-True}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-no-reply@nifportal.local}
+      # --- Object storage (optional; USE_S3=True + AWS_* to use a bucket) ---
+      - USE_S3=${USE_S3:-False}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME:-}
+      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME:-}
+      - AWS_S3_ENDPOINT_URL=${AWS_S3_ENDPOINT_URL:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      # --- Gunicorn tuning ---
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-3}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Named volume: uploaded attachments / profile photos / generated PDFs
+      # survive `up --build`, restarts, and redeploys.
+      - media_data:/app/media
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health/').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Scheduled jobs — same image as backend, runs cron in the foreground.
+  # Shares the media volume (report generation / purge) and gets the public
+  # URLs + SMTP so the weekly digest email links resolve to the real domain.
+  cron:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: nif-cron
+    restart: unless-stopped
+    environment:
+      - DATABASE_HOST=db
+      - DATABASE_PORT=5432
+      - DATABASE_ENGINE=${DATABASE_ENGINE:-postgresql}
+      - DATABASE_NAME=${DATABASE_NAME:-leave_system}
+      - DATABASE_USER=${DATABASE_USER:-leave_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:?set DATABASE_PASSWORD in .env}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:?set DJANGO_ALLOWED_HOSTS in .env},localhost,127.0.0.1
+      - FRONTEND_URL=${FRONTEND_URL:?set FRONTEND_URL in .env}
+      - SITE_URL=${SITE_URL:?set SITE_URL in .env}
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+      - EMAIL_HOST=${EMAIL_HOST:-}
+      - EMAIL_PORT=${EMAIL_PORT:-587}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER:-}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD:-}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-True}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-no-reply@nifportal.local}
+      - USE_S3=${USE_S3:-False}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME:-}
+      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME:-}
+      - AWS_S3_ENDPOINT_URL=${AWS_S3_ENDPOINT_URL:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - media_data:/app/media
+    # cron strips the environment, so persist the runtime env for jobs, install
+    # the crontab (baked into the image at /app/deploy/crontab), and run cron -f.
+    command: >
+      bash -c "printenv | grep -E '^(DATABASE_|DJANGO_|EMAIL_|DEFAULT_FROM_EMAIL|FRONTEND_URL|SITE_URL|USE_S3|AWS_)' > /etc/environment &&
+               crontab /app/deploy/crontab &&
+               cron -f"
+
+  # Reverse proxy + static SPA host. Multi-stage image builds frontend/dist and
+  # serves it via Caddy, which also terminates TLS (automatic HTTPS) and proxies
+  # /api /admin /static /media to Gunicorn. No Vite dev server in prod.
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend.prod
+    container_name: nif-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Your public domain, e.g. nif.example.com. Caddy provisions its TLS cert.
+      - SITE_DOMAIN=${SITE_DOMAIN:?set SITE_DOMAIN to your domain in .env}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  media_data:
+  caddy_data:
+  caddy_config:

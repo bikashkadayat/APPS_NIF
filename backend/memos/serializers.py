@@ -48,15 +48,17 @@ class UserMiniSerializer(serializers.ModelSerializer):
 
 class MemoAssigneeSerializer(serializers.ModelSerializer):
     """
-    Minimal user shape for the assign-checker/approver pickers. Deliberately
-    excludes email and role (H5): the directory must not leak PII or let any
-    authenticated user enumerate the full staff roster.
+    Minimal user shape for the assign-checker/approver pickers. Excludes email
+    (H5: no PII / roster enumeration) but includes the role so the UI can show a
+    "Dept Head / HR / Admin" badge — the directory is already search-gated and
+    limited to approval-eligible roles.
     """
     full_name = serializers.SerializerMethodField()
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
 
     class Meta:
         model = User
-        fields = ["id", "full_name", "department"]
+        fields = ["id", "full_name", "department", "role", "role_display"]
 
     def get_full_name(self, obj):
         return obj.get_full_name() or obj.username

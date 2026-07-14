@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import { CalendarDays, Stethoscope, Baby, HeartHandshake, Award } from 'lucide-react';
 import { leaveService } from '../../services/leaveService';
 
@@ -23,13 +24,15 @@ const CategoryBalances = () => {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let alive = true;
+  const load = useCallback(() => {
     leaveService.getEntitlements()
-      .then((d) => { if (alive) setData(d); })
-      .catch(() => { if (alive) setError('Could not load your leave balances.'); });
-    return () => { alive = false; };
+      .then((d) => setData(d))
+      .catch(() => setError('Could not load your leave balances.'));
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+  // Balances change when leave is approved/cancelled elsewhere — keep them fresh.
+  useAutoRefresh(load, 20000);
 
   if (error) return <div className="att-err">{error}</div>;
   if (!data) return <div style={{ color: 'var(--text-muted)' }}>Loading balances…</div>;

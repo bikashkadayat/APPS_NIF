@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLeaves } from '../../hooks/useLeaves';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import LeaveCard from '../../components/common/LeaveCard';
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -13,6 +14,7 @@ const TeamCalendar = () => {
   useEffect(() => {
     fetchLeaves();
   }, [fetchLeaves]);
+  useAutoRefresh(fetchLeaves, 30000); // team leave updates appear without a refresh
 
   // Calendar logic
   const year = currentDate.getFullYear();

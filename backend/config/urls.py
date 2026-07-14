@@ -73,6 +73,9 @@ urlpatterns = [
     # Attendance (check-in/out, calendar, HR management)
     path('api/v1/', include('attendance.urls')),
 
+    # Inventory (items, assignments, take-out workflow)
+    path('api/v1/', include('inventory.urls')),
+
     # Health checks (Phase 5)
     path('api/v1/health/', HealthView.as_view(), name='health'),
     path('api/v1/health/detailed/', DetailedHealthView.as_view(), name='health-detailed'),

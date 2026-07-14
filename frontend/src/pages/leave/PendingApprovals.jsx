@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLeaves } from '../../hooks/useLeaves';
+import { leaveService } from '../../services/leaveService';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import { useAuth } from '../../hooks/useAuth';
 import Badge from '../../components/common/Badge';
 import LeaveReviewModal from '../../components/leave/LeaveReviewModal';
@@ -8,18 +9,31 @@ import { ArrowLeft, Eye } from 'lucide-react';
 
 const PendingApprovals = () => {
   const navigate = useNavigate();
-  const { leaves, loading, error, fetchLeaves } = useLeaves();
-  const { role } = useAuth();
+  const { role, user } = useAuth();
+  const [leaves, setLeaves] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [popup, setPopup] = useState(null);
   const [reviewId, setReviewId] = useState(null);
 
-  useEffect(() => {
-    fetchLeaves();
-  }, [fetchLeaves]);
+  // Fetch the ACTIONABLE queue from the shared backend resolver — same source as
+  // the "awaiting your review" notifications, so nothing notified is missing here.
+  const fetchLeaves = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await leaveService.getPendingApprovals();
+      setLeaves(data);
+      setError(null);
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to load pending approvals.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Both review stages can decide from this screen: Dept Head (checker) acts on
-  // Level-1 'pending' items, HR (approver) acts on Level-2 'pending_hr' items,
-  // Admin oversees both. The modal routes each decision to the right endpoint.
+  useEffect(() => { fetchLeaves(); }, [fetchLeaves]);
+  useAutoRefresh(fetchLeaves, 20000); // new pending items appear without a refresh
+
   const canApprove = ['checker', 'approver', 'admin'].includes(role);
   const canReview = ['approver', 'checker', 'admin'].includes(role);
 
@@ -53,13 +67,9 @@ const PendingApprovals = () => {
     );
   }
 
-  // Show the queue that matches the reviewer's stage. HR's queue is the
-  // 'pending_hr' items (Dept Head already approved) - previously this filtered
-  // only 'pending', so HR saw an empty queue and could never approve (H1).
-  const stageStatuses = role === 'checker' ? ['pending']
-    : role === 'approver' ? ['pending_hr']
-    : ['pending', 'pending_hr']; // admin oversees both stages
-  const pendingLeaves = leaves.filter(l => stageStatuses.includes(l.status));
+  // The backend actionable queue already returns only items this user must act on
+  // (pending, others' requests). Defensive self-exclude in case of any overlap.
+  const pendingLeaves = leaves.filter(l => l.userId !== user?.id);
 
   const handleDecided = (status) => {
     setReviewId(null);

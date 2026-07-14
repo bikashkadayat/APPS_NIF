@@ -61,11 +61,22 @@ def test_submit_without_manual_checker_uses_auto_resolve(api, maker, checker, ap
 
 
 @pytest.mark.django_db
-def test_submit_with_invalid_checker_role_returns_400(api, maker, approver, checker):
-    mid = _draft_by(api, maker)
+def test_submit_with_invalid_checker_role_returns_400(api, maker, approver, checker, django_user_model):
+    # Memo-approval-eligible roles (Dept Head / HR / Admin) are all valid checkers
+    # now; a plain Maker is NOT. Use a second maker as the invalid assignee.
+    other_maker = django_user_model.objects.create_user(
+        username="maker2", email="maker2@nif.test", password="pass12345",
+        role="maker", first_name="Second", last_name="Maker",
+    )
     api.force_authenticate(maker)
-    resp = api.post(f"/api/v1/memos/{mid}/submit/", {"override_reviewer_id": str(approver.id)}, format="json")
+    mid = _draft_by(api, maker)
+    resp = api.post(f"/api/v1/memos/{mid}/submit/", {"override_reviewer_id": str(other_maker.id)}, format="json")
     assert resp.status_code == 400
+
+    # An HR (approver) IS now accepted as the checker (memo-approval-eligible).
+    mid2 = _draft_by(api, maker)
+    ok = api.post(f"/api/v1/memos/{mid2}/submit/", {"override_reviewer_id": str(approver.id)}, format="json")
+    assert ok.status_code == 200
 
 
 @pytest.mark.django_db

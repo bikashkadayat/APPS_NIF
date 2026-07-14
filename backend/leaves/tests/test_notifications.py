@@ -62,31 +62,34 @@ def test_submit_notifies_dept_head_and_hr_cc(actors):
 
 @SYNC
 @pytest.mark.django_db
-def test_l1_approval_notifies_hr(actors):
+def test_dept_head_grant_notifies_employee_and_hr_record(actors):
+    """Dept Head approval is final: the employee is emailed 'Approved' and HR gets
+    a record copy (not an action item)."""
     emp, head, hr = actors
     leave_id = _apply(emp, hr)
     mail.outbox = []
     c = APIClient(); c.force_authenticate(head)
     r = c.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
     assert r.status_code == 200, r.content
+    assert Leave.objects.get(pk=leave_id).status == Leave.Status.APPROVED
     recipients = {addr for m in mail.outbox for addr in m.to}
-    assert hr.email in recipients              # HR awaiting final approval
-    assert emp.email in recipients             # employee "stage 1 passed"
+    assert hr.email in recipients              # HR record copy (visibility)
+    assert emp.email in recipients             # employee granted
+    to_emp = [m for m in mail.outbox if emp.email in m.to]
+    assert any("Approved" in m.subject for m in to_emp)
 
 
 @SYNC
 @pytest.mark.django_db
-def test_hr_approval_emails_employee_login_email(actors):
+def test_grant_emails_employee_login_email(actors):
+    """The grant email goes to the employee's account (login) email on Dept Head
+    approval — no HR second stage required."""
     emp, head, hr = actors
     leave_id = _apply(emp, hr)
-    APIClient().post  # noqa
-    ch = APIClient(); ch.force_authenticate(head)
-    ch.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
     mail.outbox = []
-    ca = APIClient(); ca.force_authenticate(hr)
-    r = ca.post(f"/api/v1/leaves/{leave_id}/hr-review/", {"decision": "approve"}, format="json")
+    ch = APIClient(); ch.force_authenticate(head)
+    r = ch.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
     assert r.status_code == 200, r.content
-    # Employee is emailed at their account (login) email, subject says Approved.
     to_emp = [m for m in mail.outbox if emp.email in m.to]
     assert to_emp and any("Approved" in m.subject for m in to_emp)
     assert Leave.objects.get(pk=leave_id).status == Leave.Status.APPROVED

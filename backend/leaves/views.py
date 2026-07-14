@@ -23,6 +23,13 @@ class LeaveViewSet(viewsets.ModelViewSet):
         user = self.request.user
         from users.models import User
 
+        # Actionable pending queue — the SINGLE SOURCE shared with notifications
+        # (leaves.approvals). Drives the Pending Approvals list + count so they can
+        # never disagree with who was told "awaiting your review".
+        if self.request.query_params.get("queue") == "actionable":
+            from .approvals import pending_actionable_leaves
+            return pending_actionable_leaves(user).order_by("-created_at")
+
         # Soft-deleted leaves are hidden from all listings/detail (Phase 5).
         base = Leave.objects.filter(is_deleted=False).order_by("-created_at")
 
@@ -30,13 +37,19 @@ class LeaveViewSet(viewsets.ModelViewSet):
             return base.filter(user=user)
 
         if user.role == User.Roles.CHECKER:
-            # Department Head: Level-1 queue = leaves awaiting DH review, scoped
-            # to their own department when one is assigned (spec: "sees only own
-            # department"). Falls back to all-pending if no department is set.
-            qs = base.filter(status=Leave.Status.PENDING)
+            # A Department Head's list serves TWO purposes from one endpoint:
+            #   1. their OWN applications (all statuses) — for My Applications,
+            #      dashboard counts, and recent/history; and
+            #   2. their Level-1 review queue = pending leaves in their department.
+            # Without clause (1), a Dept Head who applied for leave saw an empty
+            # My Applications and all-zero dashboard counts even though their leave
+            # existed (it wasn't 'pending', so the review-only filter dropped it).
+            from django.db.models import Q
+            own = Q(user=user)
+            review = Q(status=Leave.Status.PENDING)
             if user.department_ref_id:
-                qs = qs.filter(user__department_ref_id=user.department_ref_id)
-            return qs
+                review &= Q(user__department_ref_id=user.department_ref_id)
+            return base.filter(own | review).distinct()
 
         if user.role in [User.Roles.APPROVER, User.Roles.ADMIN]:
             # HR / Admin: all departments (Level-2 queue is status=PENDING_HR).
@@ -145,42 +158,84 @@ class LeaveViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='dept-head-review', permission_classes=[IsAuthenticated])
     def dept_head_review(self, request, pk=None):
-        """Level-1 review by the Department Head (role=checker). approve -> PENDING_HR, reject -> REJECTED."""
+        """Department Head review — FINAL and EFFECTIVE. approve -> APPROVED
+        (leave granted immediately + balance deducted atomically); reject ->
+        REJECTED (reason mandatory). HR/Admin approval is NOT a second stage; HR
+        (approver) may act only as a fallback grantor when the applicant's
+        department has no active Department Head, so leave can never get stuck."""
+        from django.db import transaction
         from django.utils import timezone
         from users.models import User
+        from . import services
         leave = self.get_object()
         actor = request.user
-        if actor.role not in [User.Roles.CHECKER, User.Roles.ADMIN]:
-            raise PermissionDenied("Only a Department Head can perform the Level-1 review.")
+
         if actor.id == leave.user_id:
             raise PermissionDenied("You cannot review your own leave.")
-        if actor.role == User.Roles.CHECKER and actor.department_ref_id and leave.user.department_ref_id != actor.department_ref_id:
+
+        is_admin = actor.role == User.Roles.ADMIN
+        is_dept_head = actor.role == User.Roles.CHECKER
+        # Fallback: HR grants ONLY when the applicant's department has no active
+        # Department Head. Otherwise HR is not part of the grant path.
+        is_hr_fallback = (
+            actor.role == User.Roles.APPROVER
+            and not services.department_has_dept_head(leave.user)
+        )
+        if not (is_admin or is_dept_head or is_hr_fallback):
+            raise PermissionDenied(
+                "Only the Department Head grants leave. HR/Admin may act only as a "
+                "fallback when the department has no active Department Head."
+            )
+        # A Department Head is scoped to leave from their OWN department.
+        if is_dept_head and actor.department_ref_id and leave.user.department_ref_id != actor.department_ref_id:
             raise PermissionDenied("You can only review leave from your own department.")
         if leave.status != Leave.Status.PENDING:
             return Response({"error": "Leave is not awaiting Department Head review."}, status=status.HTTP_400_BAD_REQUEST)
 
         decision = (request.data.get('decision') or '').lower()
-        remarks = request.data.get('remarks', '') or ''
+        remarks = (request.data.get('remarks') or '').strip()
         if decision not in ('approve', 'reject'):
             return Response({"error": "decision must be 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+        # A rejection must always carry a reason (spec: mandatory remark on reject).
+        if decision == 'reject' and not remarks:
+            return Response({"error": "A remark is required when rejecting a request."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         old_status = leave.status
-        leave.department_head_reviewer = actor
-        leave.department_head_action_date = timezone.now()
-        if remarks:
-            leave.remarks = remarks
-        if decision == 'approve':
-            leave.status = Leave.Status.PENDING_HR
-            audit_action = AuditLog.Action.UPDATE
-        else:
-            leave.status = Leave.Status.REJECTED
-            audit_action = AuditLog.Action.REJECT
-        leave.save()
+        with transaction.atomic():
+            leave.department_head_reviewer = actor
+            leave.department_head_action_date = timezone.now()
+            # Single effective approval: record the actor as the final approver too
+            # (drives the granted-leave PDF/certificate + the employee notification).
+            leave.approver = actor
+            if remarks:
+                leave.remarks = remarks
+            if decision == 'approve':
+                # Re-validate the balance at grant time (H4): entitlement or other
+                # approvals may have changed since the employee applied. The leave
+                # is already counted as pending, so this row-locked recompute is the
+                # true post-grant figure and must not exceed the allocation.
+                if leave.leave_type in services.ENTITLEMENT_CODES:
+                    bal = services.sync_simple_balance(leave.user, leave.leave_type, leave.start_date.year)
+                    if bal and bal.used_so_far > bal.total_allocated:
+                        return Response(
+                            {"error": f"Approving would exceed the {leave.leave_type.capitalize()} "
+                                      f"Leave allocation ({bal.total_allocated} day(s)); the balance "
+                                      f"changed after this leave was applied."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                leave.status = Leave.Status.APPROVED
+                audit_action = AuditLog.Action.APPROVE
+            else:
+                leave.status = Leave.Status.REJECTED
+                audit_action = AuditLog.Action.REJECT
+            leave.save()  # signal syncs day records + recomputes balances (derived, no double-deduct)
+
         log_action(actor, audit_action, instance=leave,
                    changes={'stage': 'department_head', 'from': old_status, 'to': leave.status, 'remarks': remarks},
                    request=request)
-        # Notifications (Trigger 2 approve / Trigger 4 reject) fire from the Leave
-        # post_save signal on the status transition.
+        # Notifications fire from the Leave post_save signal: APPROVED -> employee
+        # "granted" (+ HR/Admin record copy); REJECTED -> employee with reason.
         return Response(self.get_serializer(leave).data)
 
     @action(detail=True, methods=['post'], url_path='hr-review', permission_classes=[IsApproverOrAdmin])
@@ -328,6 +383,67 @@ class LeaveCalendarView(views.APIView):
         leaves = Leave.objects.filter(status=Leave.Status.APPROVED)
         serializer = LeaveSerializer(leaves, many=True)
         return Response(serializer.data)
+
+
+class LeavePolicyView(views.APIView):
+    """GET /api/v1/leaves/leave-policy/ - the official NIF category-based leave
+    entitlements, driven LIVE from the EntitlementRule matrix (the same source the
+    balance cards derive from), so the policy text can never drift from the actual
+    balances. Also returns the caller's resolved category to highlight/expand it."""
+    permission_classes = [IsAuthenticated]
+
+    CATEGORY_ORDER = ["A", "B", "C", "D", "PROBATION"]
+    CATEGORY_LABEL = {
+        "A": "Permanent Staff — more than 3 years of service",
+        "B": "Permanent Staff — 1 to 3 years of service",
+        "C": "Post-Probation — 3 months to 1 year of service",
+        "D": "Interns and Volunteers",
+        "PROBATION": "Probation — first 3 months",
+    }
+    TYPE_ORDER = ["annual", "sick", "maternity", "paternity", "compensatory"]
+
+    def _value(self, code, days, applicable):
+        if not applicable:
+            return "Not applicable"
+        d = f"{days:g}"
+        if code == "compensatory":
+            return "Granted for approved weekend/holiday work"
+        if code in ("maternity", "paternity"):
+            return f"{d} days"
+        if code == "annual":
+            return f"{d} working days/year"
+        return f"{d} days/year"
+
+    def get(self, request):
+        from . import category_engine
+        from .models import EntitlementRule
+
+        your_category, _flag = category_engine.resolve_and_cache(request.user)
+
+        by_cat = {}
+        for r in EntitlementRule.objects.select_related("leave_type").all():
+            by_cat.setdefault(r.category, {})[r.leave_type.code.lower()] = r
+
+        categories = []
+        for key in self.CATEGORY_ORDER:
+            rows = by_cat.get(key)
+            if not rows:
+                continue
+            items = []
+            for code in self.TYPE_ORDER:
+                r = rows.get(code)
+                if r is None:
+                    continue
+                items.append({
+                    "code": code,
+                    "leave_type": r.leave_type.name,
+                    "days": float(r.entitlement_days),
+                    "applicable": r.applicable,
+                    "value": self._value(code, float(r.entitlement_days), r.applicable),
+                })
+            categories.append({"key": key, "label": self.CATEGORY_LABEL.get(key, key), "items": items})
+
+        return Response({"your_category": your_category, "categories": categories})
 
 
 class MyEntitlementsView(views.APIView):

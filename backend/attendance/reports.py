@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from config.nepali_dates import to_bs
 from leaves.models import Holiday, Leave
+from . import services
 from .models import Attendance
 
 # Python weekday(): Mon=0 .. Sun=6
@@ -53,18 +54,23 @@ def _leave_dates(emp_id, leaves, start, end):
     return out
 
 
-def _status_for(rec, d, holiday_dates, leave_dates, today):
-    if rec and rec.check_in:
-        return rec.status
-    if d.weekday() == 5 or d in holiday_dates:
-        return "holiday"
-    if d in leave_dates:
-        return "on_leave"
-    if rec:
-        return rec.status
-    if d > today:
-        return "upcoming"
-    return "absent"
+def _status_for(rec, d, holiday_dates, leave_dates, today, floor):
+    """Delegates to the canonical resolver so reports agree with the dashboard /
+    calendar. Returns a lowercase status key, or None for Not Applicable days
+    (before join/feature-start, today mid-day, or future)."""
+    st = services.resolve_day_status(
+        record=rec,
+        is_holiday_day=(d.weekday() == 5 or d in holiday_dates),
+        is_leave_day=(d in leave_dates),
+        d=d,
+        floor=floor,
+        today=today,
+    )
+    if st is None:
+        return None
+    # st may be an Attendance.Status member (Holiday/On-Leave/Absent) or a plain
+    # stored status string (record.status). Normalise to the lowercase key.
+    return getattr(st, "value", st)
 
 
 def _fmt_time(dt):
@@ -84,14 +90,18 @@ def build_employee_report(emp, start, end, *, holiday_dates=None, leave_dates=No
             user=emp, status=Leave.Status.APPROVED, is_deleted=False,
             start_date__lte=end, end_date__gte=start), start, end)
 
+    floor = services.absent_floor(emp)
     rows, summary = [], {k: 0 for k in STATUS_KEYS}
     working_days = 0
     for d in _daterange(start, end):
         rec = records.get(d)
-        status = _status_for(rec, d, holiday_dates, leave_dates, today)
+        status = _status_for(rec, d, holiday_dates, leave_dates, today, floor)
+        display = status or "upcoming"
         if status in summary:
             summary[status] += 1
-        if d.weekday() != 5 and d not in holiday_dates:
+        # Working days exclude Saturdays, holidays, and Not-Applicable days
+        # before the employee's tracking floor (never counted anywhere).
+        if d.weekday() != 5 and d not in holiday_dates and (floor is None or d >= floor):
             working_days += 1
         rows.append({
             "date_ad": d.strftime("%Y-%m-%d"),
@@ -101,8 +111,8 @@ def build_employee_report(emp, start, end, *, holiday_dates=None, leave_dates=No
             "check_in": _fmt_time(rec.check_in) if rec else "—",
             "check_out": _fmt_time(rec.check_out) if rec else "—",
             "working_hours": str(rec.working_hours) if rec else "0.00",
-            "status": status,
-            "status_label": STATUS_LABEL.get(status, status),
+            "status": display,
+            "status_label": STATUS_LABEL.get(display, display),
             "remarks": (rec.remarks if rec else "") or "",
         })
     summary["working_days"] = working_days

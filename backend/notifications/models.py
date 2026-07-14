@@ -16,6 +16,9 @@ class Category(models.TextChoices):
     POLICY_UPDATED = "POLICY_UPDATED", "Policy updated"
     SYSTEM_ANNOUNCEMENT = "SYSTEM_ANNOUNCEMENT", "System announcement"
     WEEKLY_DIGEST = "WEEKLY_DIGEST", "Weekly digest"
+    INVENTORY_TAKEOUT_REQUESTED = "INVENTORY_TAKEOUT_REQUESTED", "Inventory take-out requested"
+    INVENTORY_TAKEOUT_APPROVED = "INVENTORY_TAKEOUT_APPROVED", "Inventory take-out approved"
+    INVENTORY_TAKEOUT_REJECTED = "INVENTORY_TAKEOUT_REJECTED", "Inventory take-out rejected"
 
 
 class Notification(models.Model):

@@ -7,7 +7,7 @@
     size: A4;
     margin: 1.8cm 1.6cm 2.4cm 1.6cm;
     @bottom-center {
-      content: "Generated {{ generated_at }} · Verify at {{ verify_url }}";
+      content: "{{ org.name }} · {{ org.address }} · Phone: {{ org.tel }} · {{ org.email }}";
       font-size: 8px; color: #9ca3af;
     }
     @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 8px; color: #9ca3af; }
@@ -45,8 +45,7 @@
       {% if logo %}<img src="{{ logo }}" alt="Nepal Internet Foundation logo" class="letterhead-logo">{% endif %}
     </td>
     <td style="border:none; vertical-align:middle; padding:0 0 0 14px;">
-      <div class="org-name">{{ org.name }}</div>
-      <div class="org-meta">{{ org.address }} · Tel: {{ org.tel }} · {{ org.email }} · {{ org.website }}</div>
+      {% include "pdf/_org_contact.html" %}
     </td>
     <td class="doc-meta" style="border:none; vertical-align:middle;">
       <div class="doc-number">{{ document_number }}</div>

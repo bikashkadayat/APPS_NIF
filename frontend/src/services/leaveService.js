@@ -63,6 +63,14 @@ export const leaveService = {
     return { data: unwrapPaginated(response).map(mapLeave) };
   },
 
+  // Actionable pending-approval queue for the current user — driven by the shared
+  // backend resolver (leaves.approvals), the SAME source as the notifications, so
+  // every "awaiting your review" item appears here.
+  getPendingApprovals: async () => {
+    const response = await api.get('/leaves/', { params: { queue: 'actionable' } });
+    return { data: unwrapPaginated(response).map(mapLeave) };
+  },
+
   getBalances: async () => {
     const response = await api.get('/leaves/balance');
     return { data: response.data };
@@ -70,6 +78,9 @@ export const leaveService = {
 
   // Category-aware entitlement view for the dashboard (cards + comp + category).
   getEntitlements: async () => (await api.get('/leaves/my-entitlements/')).data,
+  // Official category-based leave policy (A–D), driven live from the entitlement
+  // engine so it can never drift from the balance cards.
+  getLeavePolicy: async () => (await api.get('/leaves/leave-policy/')).data,
 
   create: async (data, employeeName) => {
     const response = await api.post('/leaves/', toBackendPayload(data));
@@ -83,11 +94,11 @@ export const leaveService = {
     return { data: mapLeave(response.data) };
   },
 
-  // Two-stage review. Routes to the correct backend endpoint based on the leave's
-  // CURRENT status so the workflow is enforced end-to-end:
-  //   pending    -> Department Head (Level 1): approve => pending_hr, reject
-  //   pending_hr -> HR (Level 2):              approve => approved (+balance), reject
-  // `status` is the UI decision ('approved' | 'rejected').
+  // Leave review. The Department Head's approval is FINAL and grants the leave:
+  //   pending    -> dept-head-review: approve => APPROVED (granted + balance), reject
+  //   pending_hr -> hr-review:        legacy two-stage rows only (finalize/reject)
+  // HR/Admin act via dept-head-review only as a fallback when a department has no
+  // Department Head. `status` is the UI decision ('approved' | 'rejected').
   reviewLeave: async (id, currentStatus, status, remarks = '') => {
     const decision = status === 'approved' ? 'approve' : 'reject';
     const path = currentStatus === 'pending_hr' ? 'hr-review' : 'dept-head-review';

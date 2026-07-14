@@ -36,7 +36,7 @@ COPY backend/ .
 
 # No secrets or environment-specific config are baked into the image; every
 # value (SECRET_KEY, DB credentials, hosts) is injected at runtime by
-# docker-compose / Render. settings.py fails fast if a required secret is missing.
+# docker-compose. settings.py fails fast if a required secret is missing.
 EXPOSE 8000
 
 # Production start: apply migrations, collect static (builds the WhiteNoise

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLeaves } from '../../hooks/useLeaves';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import { useAuth } from '../../hooks/useAuth';
 import LeaveCard from '../../components/common/LeaveCard';
 import DashboardRecordsSummary from '../../components/leave-records/DashboardRecordsSummary';
@@ -8,6 +9,7 @@ import DashboardMemoCard from '../../components/memo/DashboardMemoCard';
 import DepartmentStats from '../../components/admin/DepartmentStats';
 import AttendanceWidget from '../../components/attendance/AttendanceWidget';
 import CategoryBalances from '../../components/leave/CategoryBalances';
+import LeavePolicyWidget from '../../components/leave/LeavePolicyWidget';
 import { CalendarDays, Stethoscope, Briefcase, Plane, Plus, ArrowRight, ClipboardCheck, Users, Calendar, FileText, CheckCircle, Clock, XCircle } from 'lucide-react';
 
 const LeaveDashboard = () => {
@@ -36,6 +38,9 @@ const LeaveDashboard = () => {
       fetchBalances();
     }
   }, [fetchLeaves, fetchBalances, role]);
+
+  // Keep counts/lists/balances fresh across accounts (poll + refetch on focus).
+  useAutoRefresh(() => { fetchLeaves(); if (role !== 'approver') fetchBalances(); }, 20000);
 
   const stats = {
     total: leaves.length,
@@ -303,36 +308,9 @@ const LeaveDashboard = () => {
         {/* SIDEBAR COLUMN */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
           
-          {/* Leave Policy Widget */}
-          <div className="side-card" style={{ padding: '28px' }}>
-            <h3 style={{ fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1.5px', marginBottom: '24px', color: 'var(--text-muted)' }}>Leave Policy</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--brand-blue)', marginTop: '6px', flexShrink: 0 }}></div>
-                <div style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                  <strong style={{ color: 'var(--text-primary)' }}>Annual Leave:</strong> 18 days/year for regular employees
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--brand-red)', marginTop: '6px', flexShrink: 0 }}></div>
-                <div style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                  <strong style={{ color: 'var(--text-primary)' }}>Sick Leave:</strong> 12 days/year with medical certificate
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--success)', marginTop: '6px', flexShrink: 0 }}></div>
-                <div style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                  <strong style={{ color: 'var(--text-primary)' }}>Casual Leave:</strong> 6 days/year for personal matters
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--draft)', marginTop: '6px', flexShrink: 0 }}></div>
-                <div style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                  <strong style={{ color: 'var(--text-primary)' }}>Work from Home:</strong> Available upon manager approval
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* Leave Policy Widget — official category-based entitlements (live from
+              the entitlement engine; see LeavePolicyWidget). */}
+          <LeavePolicyWidget />
 
           {/* Tips Widget */}
           <div className="side-card" style={{ padding: '28px' }}>

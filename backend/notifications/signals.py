@@ -57,8 +57,11 @@ def leave_notifications(sender, instance, created, **kwargs):
     Each trigger is idempotency-keyed, so a transition can't notify twice.
     """
     from leaves import notifications as leave_notify
+    from .dispatcher import resolve_source_notifications
 
     if getattr(instance, "is_deleted", False):
+        # Soft-deleted -> nobody needs to review it any more; clear the queue notices.
+        resolve_source_notifications(f"leave-{instance.id}-submitted")
         return
 
     if created:
@@ -68,6 +71,10 @@ def leave_notifications(sender, instance, created, **kwargs):
 
     old = getattr(instance, "_old_status", None)
     if old is not None and old != instance.status:
+        # Left the PENDING stage (approved/rejected) -> clear "awaiting review" notices
+        # so the approver's bell reconciles with their (now empty) pending queue.
+        if instance.status != Leave.Status.PENDING:
+            resolve_source_notifications(f"leave-{instance.id}-submitted")
         if instance.status == Leave.Status.PENDING_HR:
             leave_notify.leave_l1_approved(instance)      # Trigger 2 -> HR (+ employee)
         elif instance.status == Leave.Status.APPROVED:

@@ -60,24 +60,26 @@ def test_pending_leave_reserves_balance_and_blocks_overapplication(maker, checke
 
 
 @pytest.mark.django_db
-def test_two_stage_approval_deducts_exactly_once(maker, checker, approver):
-    """M3: pending -> Dept Head -> HR keeps the deduction at 5 (never doubles)."""
+def test_dept_head_grant_deducts_exactly_once(maker, checker, approver):
+    """M3: pending -> Department Head approve -> APPROVED (granted) keeps the
+    deduction at 5 (reserved once while pending, consumed once on grant — never
+    doubles). Dept Head approval is final; no HR stage."""
     client = APIClient(); client.force_authenticate(maker)
     resp = _apply(client, approver, MONDAY, FRI)
     leave_id = resp.json()["id"]
-    assert _balance(maker) == 5
+    assert _balance(maker) == 5  # reserved while PENDING
 
-    # Level 1: Department Head approves -> pending_hr. Balance still reserved once.
+    # Department Head approves -> APPROVED immediately (leave granted).
     dh = APIClient(); dh.force_authenticate(checker)
     r1 = dh.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
     assert r1.status_code == 200, r1.content
-    assert Leave.objects.get(pk=leave_id).status == Leave.Status.PENDING_HR
-    assert _balance(maker) == 5
+    assert Leave.objects.get(pk=leave_id).status == Leave.Status.APPROVED
+    assert _balance(maker) == 5  # consumed once, not doubled
 
-    # Level 2: HR approves -> approved. Still exactly 5 (deducted once, not twice).
+    # HR is NOT a second stage: the leave is already approved, so hr-review is rejected.
     hr = APIClient(); hr.force_authenticate(approver)
     r2 = hr.post(f"/api/v1/leaves/{leave_id}/hr-review/", {"decision": "approve"}, format="json")
-    assert r2.status_code == 200, r2.content
+    assert r2.status_code == 400, r2.content
     assert Leave.objects.get(pk=leave_id).status == Leave.Status.APPROVED
     assert _balance(maker) == 5
 
@@ -99,14 +101,39 @@ def test_cancelling_approved_leave_refunds_balance(maker, checker, approver):
     """H3: deleting an approved leave frees the balance it had consumed."""
     client = APIClient(); client.force_authenticate(maker)
     leave_id = _apply(client, approver, MONDAY, FRI).json()["id"]
-    APIClient();
+    # Department Head approval grants the leave (final stage).
     dh = APIClient(); dh.force_authenticate(checker)
     dh.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
-    hr = APIClient(); hr.force_authenticate(approver)
-    hr.post(f"/api/v1/leaves/{leave_id}/hr-review/", {"decision": "approve"}, format="json")
+    assert Leave.objects.get(pk=leave_id).status == Leave.Status.APPROVED
     assert _balance(maker) == 5
 
     # Employee cancels the approved leave -> soft-deleted, balance refunded.
     r = client.delete(f"/api/v1/leaves/{leave_id}/")
     assert r.status_code in (200, 204), r.content
     assert _balance(maker) == 0
+
+
+@pytest.mark.django_db
+def test_hr_fallback_grants_when_no_dept_head(approver):
+    """Phase 3 fallback: an employee whose department has NO active Department
+    Head can still be granted leave by HR, so a request never gets stuck."""
+    solo = _user("solo_emp", User.Roles.MAKER, department="SOLO")  # no checker in SOLO
+    client = APIClient(); client.force_authenticate(solo)
+    leave_id = _apply(client, approver, MONDAY, FRI).json()["id"]
+
+    hr = APIClient(); hr.force_authenticate(approver)
+    r = hr.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
+    assert r.status_code == 200, r.content
+    assert Leave.objects.get(pk=leave_id).status == Leave.Status.APPROVED
+
+
+@pytest.mark.django_db
+def test_hr_cannot_grant_when_dept_head_exists(maker, checker, approver):
+    """HR is NOT a grant stage when the department HAS an active Department Head:
+    the fallback path is refused (403) and the leave stays pending for the DH."""
+    client = APIClient(); client.force_authenticate(maker)
+    leave_id = _apply(client, approver, MONDAY, FRI).json()["id"]
+    hr = APIClient(); hr.force_authenticate(approver)
+    r = hr.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
+    assert r.status_code == 403, r.content
+    assert Leave.objects.get(pk=leave_id).status == Leave.Status.PENDING

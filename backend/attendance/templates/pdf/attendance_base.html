@@ -5,7 +5,7 @@
 <style>
   @page {
     size: A4; margin: 1.6cm 1.4cm 2.2cm 1.4cm;
-    @bottom-center { content: "Official attendance record - Nepal Internet Foundation"; font-size: 8px; color: #9ca3af; }
+    @bottom-center { content: "{{ org.name }} · {{ org.address }} · Phone: {{ org.tel }} · {{ org.email }}"; font-size: 8px; color: #9ca3af; }
     @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 8px; color: #9ca3af; }
   }
   body { font-family: "Inter", Helvetica, Arial, sans-serif; color: #1f2937; font-size: 11px; line-height: 1.5; }
@@ -47,8 +47,7 @@
       {% if logo %}<img src="{{ logo }}" alt="Nepal Internet Foundation logo" class="letterhead-logo">{% endif %}
     </td>
     <td style="border:none; vertical-align:middle; padding:0 0 0 12px;">
-      <div class="org-name">{{ org.name }}</div>
-      <div class="org-meta">{{ org.address }} · Tel: {{ org.tel }} · {{ org.email }} · {{ org.website }}</div>
+      {% include "pdf/_org_contact.html" %}
     </td>
     <td class="doc-meta" style="border:none; vertical-align:middle;">
       <div>Generated (BS): {{ generated_bs }}</div>

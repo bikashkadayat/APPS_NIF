@@ -212,17 +212,18 @@ class MemoViewSet(viewsets.ModelViewSet):
         result = services.cancel_memo(memo, request.user, comment, request=request)
         return self._detail_response(result)
 
-    def _directory(self, request, role):
+    def _directory(self, request, roles):
         """
-        Search-gated, capped, PII-free assignee lookup (H5). Returns [] until at
-        least DIRECTORY_MIN_QUERY chars are supplied, matches on name/username
-        only (never email), and returns at most DIRECTORY_LIMIT rows.
+        Search-gated, capped assignee lookup (H5). Returns [] until at least
+        DIRECTORY_MIN_QUERY chars are supplied, matches on name/username only
+        (never email), and returns at most DIRECTORY_LIMIT rows. `roles` is the
+        set of memo-approval-eligible roles to include.
         """
         query = (request.query_params.get("search") or "").strip()
         if len(query) < DIRECTORY_MIN_QUERY:
             return Response([])
         qs = (
-            User.objects.filter(role=role, is_active=True)
+            User.objects.filter(role__in=roles, is_active=True)
             .filter(
                 Q(first_name__icontains=query)
                 | Q(last_name__icontains=query)
@@ -235,14 +236,16 @@ class MemoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="available-checkers",
             permission_classes=[IsAuthenticated], throttle_classes=[MemoDirectoryThrottle])
     def available_checkers(self, request):
-        """Active checkers for the maker's optional 'assign checker' dropdown."""
-        return self._directory(request, User.Roles.CHECKER)
+        """Memo-approval-eligible reviewers for the maker's 'assign checker'
+        dropdown: Department Head, HR, and Admin (active). HR + Admin are org-wide
+        approvers, so they appear even when the maker's department has no Dept Head."""
+        return self._directory(request, [User.Roles.CHECKER, User.Roles.APPROVER, User.Roles.ADMIN])
 
     @action(detail=False, methods=["get"], url_path="available-approvers",
             permission_classes=[IsAuthenticated], throttle_classes=[MemoDirectoryThrottle])
     def available_approvers(self, request):
-        """Active approvers for the checker's optional 'assign approver' dropdown."""
-        return self._directory(request, User.Roles.APPROVER)
+        """Final approvers for the checker's 'assign approver' dropdown: HR + Admin."""
+        return self._directory(request, [User.Roles.APPROVER, User.Roles.ADMIN])
 
     @action(detail=True, methods=["get"], url_path="attachment")
     def attachment(self, request, pk=None):

@@ -115,7 +115,12 @@ class ProfilePhotoView(APIView):
         user = request.user
         if user.profile_photo:
             user.profile_photo.delete(save=False)  # avoid orphaned old file
-        user.profile_photo.save(f'user_{user.id}.jpg', ContentFile(buffer.getvalue()), save=True)
+        # Unique filename per upload so a new photo gets a NEW URL — otherwise a
+        # fixed name (user_<id>.jpg) reuses the same URL and the browser serves
+        # the cached OLD image even though the file was replaced.
+        import uuid
+        filename = f'user_{user.id}_{uuid.uuid4().hex[:12]}.jpg'
+        user.profile_photo.save(filename, ContentFile(buffer.getvalue()), save=True)
         log_action(user, AuditLog.Action.UPDATE, instance=user,
                    changes={'event': 'PROFILE_PHOTO_UPDATED'}, request=request)
         return Response(UserSerializer(user, context={'request': request}).data)

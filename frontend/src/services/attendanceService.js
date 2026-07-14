@@ -10,6 +10,9 @@ export const attendanceService = {
   list: async (params = {}) => (await api.get('/attendance/', { params })).data,
   manual: async (payload) => (await api.post('/attendance/manual/', payload)).data,
 
+  // HR/Admin-safe options (employees + departments) for the reports dropdowns.
+  reportOptions: async () => (await api.get('/attendance/report/options/')).data,
+
   // Report exports (Admin/HR). Return the full axios response (blob) for saveBlob.
   reportWeekly: (id, week) => api.get(`/attendance/report/employee/${id}/weekly`, { params: { week }, responseType: 'blob' }),
   reportMonthly: (id, year, month) => api.get(`/attendance/report/employee/${id}/monthly`, { params: { year, month }, responseType: 'blob' }),

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&family=Poppins:wght@600;700;800&display=swap');
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -162,7 +162,7 @@ body {
   flex-shrink: 0;
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.05);
 }
-.sb-section { margin-bottom: 24px; }
+.sb-section { margin-bottom: 8px; }
 .sb-hd {
   font-size: 11px;
   font-weight: 700;
@@ -171,6 +171,49 @@ body {
   padding: 0 32px 12px;
   color: rgba(255, 255, 255, 0.4);
 }
+/* Collapsible section header (accordion) */
+.sb-hd-btn {
+  width: 100%;
+  min-height: 44px;                 /* touch target */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 32px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.45);
+  transition: color 0.2s ease;
+}
+.sb-hd-btn:hover { color: rgba(255, 255, 255, 0.8); }
+.sb-hd-btn:focus-visible {
+  outline: 2px solid var(--brand-blue-light, #7c93e6);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.sb-hd-label { text-align: left; }
+.sb-chev { flex-shrink: 0; opacity: 0.7; transition: transform 0.25s ease; }
+.sb-hd-btn[aria-expanded="true"] .sb-chev { transform: rotate(90deg); }
+/* Grid-rows collapse: smooth height animation without JS measuring. */
+.sb-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.25s ease;
+}
+.sb-body.open { grid-template-rows: 1fr; }
+.sb-body-inner { overflow: hidden; min-height: 0; }
+/* Collapsed content is removed from tab order + a11y tree after the animation. */
+.sb-body:not(.open) .sb-body-inner {
+  visibility: hidden;
+  transition: visibility 0s linear 0.25s;
+}
+.sb-body.open .sb-body-inner { visibility: visible; }
 .sb-item {
   display: flex;
   align-items: center;
@@ -213,7 +256,10 @@ body {
 
 /* ── MAIN CONTENT ── */
 .main { flex: 1; overflow-y: auto; overflow-x: hidden; }
-.page { padding: 48px; max-width: 1400px; margin: 0 auto; animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+/* Opacity-only entrance (no transform): a `transform` on .page makes native
+   <select> popups mis-anchor to the far-left on mobile (Chromium bug). */
+.page { padding: 48px; max-width: 1400px; margin: 0 auto; animation: pageIn 0.4s ease both; }
+@keyframes pageIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* ── ENTERPRISE LOGIN (centered authentication card) ── */
 .login-page {
@@ -246,18 +292,27 @@ body {
 }
 
 .auth-logo {
-  width: 240px;
-  max-width: 78%;
+  width: 190px;
+  max-width: 66%;
   height: auto;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .auth-title {
-  font-size: 19px;
+  /* Distinct display font (Poppins) — different from the Inter body font — with a
+     safe system-sans fallback so it never breaks if the webfont fails to load. */
+  font-family: 'Poppins', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 21px;
   font-weight: 700;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  line-height: 1.3;
+  color: var(--brand-blue);         /* NIF dark navy #274095 */
+  text-wrap: balance;               /* graceful 1–2 line wrap, centered */
+  overflow-wrap: break-word;
+}
+@media (max-width: 420px) {
+  .auth-title { font-size: 18px; letter-spacing: 1px; }
 }
 
 .auth-tagline {
@@ -339,6 +394,28 @@ body {
   padding: 13px 16px;
   font-size: 15px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease, opacity 0.15s ease;
+}
+.auth-submit:not(:disabled):active { transform: translateY(1px); }
+.auth-submit:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; }
+
+/* Button loading spinner */
+.auth-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  animation: authSpin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes authSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .auth-spinner { animation-duration: 1.4s; }
 }
 
 .auth-help {
@@ -935,15 +1012,18 @@ tr.mrow:hover td { background: rgba(var(--brand-blue-rgb), 0.02); cursor: pointe
 
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  /* Inset padding keeps the panel off the viewport edges (never tucked under the
+     app header); overlay itself can scroll as a last resort. */
+  padding: 24px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Above the sticky header (1000) and the mobile sidebar (1100/1200). */
+  z-index: 1300;
 }
 
 .modal-content {
@@ -953,6 +1033,34 @@ tr.mrow:hover td { background: rgba(var(--brand-blue-rgb), 0.02); cursor: pointe
   max-width: 500px;
   width: 90%;
   box-shadow: var(--shadow-lg);
+  /* Never exceed the viewport; tall forms scroll INSIDE the modal. margin:auto
+     centers short modals and, with overlay overflow, prevents top-clipping when
+     a modal is taller than the screen. */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  margin: auto;
+}
+
+/* The modal title stays pinned to the top while the body scrolls, so it is
+   always fully visible (negative margins let it span the panel's padding). */
+.modal-content > h3:first-child {
+  position: sticky;
+  top: 0;
+  margin: -24px -24px 16px;
+  padding: 24px 24px 12px;
+  background: var(--white);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  z-index: 2;
+}
+
+@media (max-width: 640px) {
+  .modal-overlay { padding: 12px 10px; }
+  .modal-content {
+    width: 94%;
+    padding: 20px;
+    max-height: calc(100dvh - 24px);
+  }
+  .modal-content > h3:first-child { margin: -20px -20px 14px; padding: 20px 20px 10px; }
 }
 
 @media (max-width: 768px) {
@@ -1968,6 +2076,9 @@ input, textarea, select { font-family: 'Inter', sans-serif; }
   /* Page headers stack their title block above the right-side actions/logo. */
   .pg-head { flex-direction: column; align-items: flex-start; gap: 12px; }
   .pg-head-right { align-self: flex-start; }
+  /* The sticky header already shows the NIF logo; the per-page .pg-logo would
+     stack directly under it on mobile and read as a duplicate. Hide it here. */
+  .pg-logo { display: none; }
   /* Any remaining 2-up form rows go single column. */
   .att-row2, .lr-two { grid-template-columns: 1fr !important; }
 }
@@ -2068,4 +2179,84 @@ input, textarea, select { font-family: 'Inter', sans-serif; }
   /* CreateMemo sticky action bar: allow the 3 buttons to wrap at 360px. */
   .lr-memo-actionbar { flex-wrap: wrap; gap: 8px; }
   .lr-memo-actionbar .lr-btn, .lr-memo-actionbar .btn { flex: 1 1 auto; }
+}
+
+/* ==========================================================================
+   "Who Has What" — asset-assignment board (scoped wf-* classes)
+   ========================================================================== */
+.wf-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; padding: 20px 24px;
+  border-bottom: 1px solid var(--border); background: #fcfdfd;
+}
+.wf-title-wrap { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wf-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 26px; height: 24px; padding: 0 9px; border-radius: 999px;
+  background: rgba(var(--brand-blue-rgb), 0.1); color: var(--brand-blue);
+  font-size: 13px; font-weight: 700;
+}
+.wf-filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.wf-field { display: flex; flex-direction: column; gap: 5px; }
+.wf-field > span {
+  font-size: 11px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--text-muted); padding-left: 2px;
+}
+.wf-select {
+  height: 40px; min-width: 150px; max-width: 220px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 0 12px; font-size: 13px; font-weight: 500; font-family: 'Inter', sans-serif;
+  color: var(--text-primary); background: var(--bg-card); cursor: pointer;
+  transition: border-color .2s, box-shadow .2s;
+}
+.wf-select:hover { border-color: var(--brand-blue-light); }
+.wf-select:focus {
+  outline: none; border-color: var(--brand-blue);
+  box-shadow: 0 0 0 4px rgba(var(--brand-blue-rgb), 0.1);
+}
+.wf-toggle { align-self: flex-end; height: 40px; display: inline-flex; align-items: center; gap: 6px; }
+
+/* Assigned-to cell: initials avatar + name */
+.wf-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wf-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  background: var(--brand-blue); color: #fff; font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.wf-who-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+
+/* Condition pill */
+.wf-cond {
+  display: inline-block; padding: 3px 11px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.4;
+}
+
+/* Row hover for the board table (desktop only; stacked cards on mobile) */
+@media (min-width: 641px) {
+  .wf-table tbody tr { transition: background .15s; }
+  .wf-table tbody tr:hover { background: var(--bg-main); }
+}
+
+/* Grouped-by-employee header chip */
+.wf-group-head {
+  display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; font-weight: 700;
+}
+.wf-group-count { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+
+/* Polished empty state (scoped to this section) */
+.wf-empty { text-align: center; padding: 56px 24px; }
+.wf-empty-icon {
+  width: 68px; height: 68px; margin: 0 auto 16px; border-radius: 50%;
+  background: var(--bg-main); color: var(--brand-blue);
+  display: flex; align-items: center; justify-content: center;
+}
+.wf-empty-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.wf-empty-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+
+@media (max-width: 640px) {
+  .wf-head { padding: 16px; }
+  .wf-filters { width: 100%; }
+  .wf-field { flex: 1 1 140px; min-width: 0; }
+  .wf-select { width: 100%; max-width: none; min-width: 0; height: 44px; }  /* >=44px touch target */
+  .wf-toggle { width: 100%; justify-content: center; height: 44px; }
 }

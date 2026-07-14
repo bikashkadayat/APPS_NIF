@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileDown, Archive, User, Users, Loader } from 'lucide-react';
 import { attendanceService } from '../../services/attendanceService';
-import { userMgmtService } from '../../services/userMgmtService';
 import { saveBlob } from '../../services/reportService';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -13,8 +12,15 @@ const AttendanceReports = () => {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  const { data: employees = [] } = useQuery({ queryKey: ['att-report-users'], queryFn: () => userMgmtService.list() });
-  const { data: departments = [] } = useQuery({ queryKey: ['att-report-depts'], queryFn: () => userMgmtService.departments() });
+  // HR-safe options endpoint (employees + departments) — reachable by HR and
+  // Admin, so the dropdowns populate for both (the old admin-only endpoints 403'd
+  // for HR and left the dropdown silently empty).
+  const { data: options, isLoading: optLoading, isError: optError, refetch: refetchOptions } = useQuery({
+    queryKey: ['att-report-options'],
+    queryFn: () => attendanceService.reportOptions(),
+  });
+  const employees = options?.employees || [];
+  const departments = options?.departments || [];
 
   // Single-employee form
   const [empId, setEmpId] = useState('');
@@ -62,11 +68,18 @@ const AttendanceReports = () => {
 
       {error && <div className="att-err" style={{ marginBottom: 16 }}>{error}</div>}
 
+      {optError && (
+        <div className="att-err" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>Could not load employees/departments — you may not have permission, or the server is unavailable.</span>
+          <button type="button" className="btn btn-ghost" onClick={() => refetchOptions()}>Retry</button>
+        </div>
+      )}
+
       {tab === 'single' && (
         <div className="table-card" style={{ padding: 24, maxWidth: 640 }}>
           <label className="lr-field"><span>Employee</span>
-            <select value={empId} onChange={(e) => setEmpId(e.target.value)}>
-              <option value="">Select employee…</option>
+            <select value={empId} onChange={(e) => setEmpId(e.target.value)} disabled={optLoading || optError}>
+              <option value="">{optLoading ? 'Loading employees…' : optError ? 'Unavailable' : 'Select employee…'}</option>
               {employees.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.employee_id || '—'})</option>)}
             </select>
           </label>
@@ -86,7 +99,7 @@ const AttendanceReports = () => {
               <label className="lr-field"><span>Year</span><input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} /></label>
             </div>
           )}
-          <button type="button" className="btn btn-primary" disabled={busy === 'single'} onClick={downloadSingle}>
+          <button type="button" className="btn btn-primary" disabled={busy === 'single' || optLoading || optError || !empId} onClick={downloadSingle}>
             {busy === 'single' ? <Loader size={16} className="lr-spin" /> : <FileDown size={16} />} Download PDF
           </button>
         </div>

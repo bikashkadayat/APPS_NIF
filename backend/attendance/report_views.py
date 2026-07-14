@@ -9,6 +9,7 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from rest_framework.response import Response
 
 from config.nepali_dates import to_bs
 from documents.pdf import logo_data_uri, render_pdf
@@ -129,3 +130,32 @@ class AllReportView(APIView):
         ctx.update(data)
         pdf = render_pdf("pdf/attendance_bulk.html", ctx)
         return _pdf(pdf, f"attendance_all_{period}_{start}.pdf")
+
+
+class ReportOptionsView(APIView):
+    """
+    GET /api/v1/attendance/report/options/
+    HR/Admin-safe read-only lookup for the Attendance Reports page: the employee
+    list + department list needed to populate its dropdowns. Scoped to the SAME
+    roles as the reports themselves (IsHROrAdmin) so HR isn't forced through the
+    admin-only user/department CRUD endpoints.
+    """
+    permission_classes = [IsAuthenticated, IsHROrAdmin]
+
+    def get(self, request):
+        from leaves.models import Department
+        employees = (
+            User.objects.filter(is_active=True)
+            .order_by("first_name", "last_name", "username")
+        )
+        departments = Department.objects.filter(is_active=True).order_by("name")
+        return Response({
+            "employees": [{
+                "id": str(u.id),
+                "full_name": u.get_full_name() or u.username,
+                "employee_id": u.employee_id,
+            } for u in employees],
+            "departments": [{
+                "id": str(d.id), "name": d.name, "code": d.code,
+            } for d in departments],
+        })

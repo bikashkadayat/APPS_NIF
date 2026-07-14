@@ -23,6 +23,7 @@ const Login = () => {
   const from = location.state?.from?.pathname || '/';
 
   useEffect(() => {
+    document.title = 'Office Management System — NIF';
     const justLoggedOut = localStorage.getItem('justLoggedOut');
     if (justLoggedOut) {
       localStorage.removeItem('justLoggedOut');
@@ -80,9 +81,9 @@ const Login = () => {
 
       <main className="auth-card" role="main">
         <div className="auth-brand">
-          <img src="/NIF.png" alt="Nepal Internet Foundation" className="auth-logo" width="240" height="96" />
-          <h1 className="auth-title">Office Leave &amp; Memo Management System</h1>
-          <p className="auth-tagline">Secure internal workspace</p>
+          <img src="/NIF.png" alt="Nepal Internet Foundation" className="auth-logo" width="190" height="84" />
+          <h1 className="auth-title">Office Management System</h1>
+          <p className="auth-tagline">Nepal Internet Foundation — Secure internal workspace</p>
         </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
@@ -124,8 +125,14 @@ const Login = () => {
             </div>
           </div>
 
-          <button type="submit" className="btn btn-primary auth-submit" disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign In'}
+          <button
+            type="submit"
+            className="btn btn-primary auth-submit"
+            disabled={loading || !formValues.email.trim() || !formValues.password}
+          >
+            {loading ? (
+              <><span className="auth-spinner" aria-hidden="true" />Signing in…</>
+            ) : 'Sign In'}
           </button>
         </form>
 

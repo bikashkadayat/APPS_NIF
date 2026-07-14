@@ -68,12 +68,20 @@ INSTALLED_APPS = [
     'notifications.apps.NotificationsConfig',
     'documents.apps.DocumentsConfig',
     'attendance.apps.AttendanceConfig',
+    'inventory.apps.InventoryConfig',
 ]
 
 # Attendance policy (configurable). Times are Asia/Kathmandu (TIME_ZONE).
 ATTENDANCE_OFFICE_START = os.getenv('ATTENDANCE_OFFICE_START', '10:00')     # late after this
 ATTENDANCE_FULL_DAY_HOURS = float(os.getenv('ATTENDANCE_FULL_DAY_HOURS', '8'))
 ATTENDANCE_HALF_DAY_HOURS = float(os.getenv('ATTENDANCE_HALF_DAY_HOURS', '5'))  # half-day if below
+# A day is only counted "Absent" on/after this global date (never before the
+# attendance feature was live). Empty = no global floor (per-employee join date
+# is always applied regardless). Format: YYYY-MM-DD.
+ATTENDANCE_TRACKING_START = os.getenv('ATTENDANCE_TRACKING_START', '')
+# Today is only eligible to be "Absent" after this local cut-off (the check-in
+# window has closed) — never mid-day. Past days are always eligible.
+ATTENDANCE_ABSENT_CUTOFF = os.getenv('ATTENDANCE_ABSENT_CUTOFF', '18:00')
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -172,7 +180,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 #   staticfiles -> WhiteNoise, compressed + content-hashed manifest, so the
 #                  Django admin / DRF browsable API load their CSS/JS in prod
 #                  with far-future cache headers.
-#   default     -> local filesystem by default (Render persistent disk, so
+#   default     -> local filesystem by default (mount a persistent volume so
 #                  uploads survive redeploys), or an S3-compatible bucket when
 #                  USE_S3=True (recommended at scale / multi-instance).
 # ---------------------------------------------------------------------------
@@ -212,9 +220,9 @@ CORS_ALLOWED_ORIGINS = _env_list('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,
 
 # ---------------------------------------------------------------------------
 # HTTPS / security hardening (Phase 3).
-# Designed to run behind Render's / Vercel's TLS-terminating proxy: the proxy
-# forwards X-Forwarded-Proto, so Django recognises forwarded HTTPS and does not
-# redirect-loop. Cookie / HSTS / redirect enforcement is gated on production
+# Designed to run behind a TLS-terminating reverse proxy (nginx / Caddy): the
+# proxy forwards X-Forwarded-Proto, so Django recognises forwarded HTTPS and
+# does not redirect-loop. Cookie / HSTS / redirect enforcement is gated on production
 # (not DEBUG) and each toggle is env-overridable, so local HTTP and the test
 # suite keep working while production is locked down by default.
 # ---------------------------------------------------------------------------
@@ -222,8 +230,8 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 
 # Admin / session CSRF over HTTPS behind a proxy needs the exact origin(s).
-# Default covers any Render subdomain; add your Vercel/custom domain via env.
-CSRF_TRUSTED_ORIGINS = _env_list('DJANGO_CSRF_TRUSTED_ORIGINS', 'https://*.onrender.com')
+# Set your domain via DJANGO_CSRF_TRUSTED_ORIGINS, e.g. https://nif.example.com.
+CSRF_TRUSTED_ORIGINS = _env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
 
 # Response security headers (always on - harmless over HTTP too).
 SECURE_CONTENT_TYPE_NOSNIFF = True
@@ -321,7 +329,10 @@ NOTIFICATIONS_RUN_SYNC = os.getenv('NOTIFICATIONS_RUN_SYNC', 'False').lower() in
 # Leave-workflow email toggles (global; per-user opt-out lives in NotificationPreference).
 NOTIFY_CC_HR_ON_SUBMIT = os.getenv('NOTIFY_CC_HR_ON_SUBMIT', 'True').lower() in ('true', '1', 'yes')
 NOTIFY_EMPLOYEE_ON_L1 = os.getenv('NOTIFY_EMPLOYEE_ON_L1', 'True').lower() in ('true', '1', 'yes')
-NOTIFY_AUDIT_COPY_ON_FINAL = os.getenv('NOTIFY_AUDIT_COPY_ON_FINAL', 'False').lower() in ('true', '1', 'yes')
+# Record copy of the final decision (grant / reject) to HR + Admin for oversight.
+# Default ON: the Department Head's approval is final, so HR/Admin are kept in the
+# loop for the record without being an approval stage.
+NOTIFY_AUDIT_COPY_ON_FINAL = os.getenv('NOTIFY_AUDIT_COPY_ON_FINAL', 'True').lower() in ('true', '1', 'yes')
 
 # Generate reports synchronously (set True in tests / small deployments).
 REPORTS_RUN_SYNC = os.getenv('REPORTS_RUN_SYNC', 'False').lower() in ('true', '1', 'yes')
@@ -332,11 +343,14 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 # Public base URL of this backend (used to build QR verification links on PDFs).
 SITE_URL = os.getenv('SITE_URL', 'http://localhost:8001')
 # Organization details printed on PDF letterheads/certificates (CMS-overridable).
+# Official organisation contact details — single source for every PDF letterhead
+# and footer (documents/templates/pdf/_org_contact.html). Override per-env if these
+# ever change; no template edit needed.
 ORG_INFO = {
     'name': os.getenv('ORG_NAME', 'Nepal Internet Foundation'),
     'address': os.getenv('ORG_ADDRESS', 'Kathmandu, Nepal'),
-    'tel': os.getenv('ORG_TEL', '+977-1-0000000'),
-    'email': os.getenv('ORG_EMAIL', 'info@nif.org.np'),
+    'tel': os.getenv('ORG_TEL', '+977-9816011780'),
+    'email': os.getenv('ORG_EMAIL', 'office@nif.org.np'),
     'website': os.getenv('ORG_WEBSITE', 'www.nif.org.np'),
 }
 NOTIFICATIONS_RUN_SYNC = os.getenv('NOTIFICATIONS_RUN_SYNC', 'False').lower() in ('true', '1', 'yes')
@@ -344,8 +358,8 @@ NOTIFICATIONS_RUN_SYNC = os.getenv('NOTIFICATIONS_RUN_SYNC', 'False').lower() in
 REPORTS_RETENTION_DAYS = int(os.getenv('REPORTS_RETENTION_DAYS', '30'))
 
 # ---------------------------------------------------------------------------
-# Logging (Phase 6): stream everything to stdout so the platform (Render /
-# Docker) aggregates it. No local log files -> safe under multi-worker Gunicorn
+# Logging (Phase 6): stream everything to stdout so the platform (Docker)
+# aggregates it. No local log files -> safe under multi-worker Gunicorn
 # (no rotation races) and nothing is lost on redeploy. Structured JSON in
 # production for log aggregation, human-readable in DEBUG. Correlation ids are
 # injected by config.middleware.RequestIDMiddleware.

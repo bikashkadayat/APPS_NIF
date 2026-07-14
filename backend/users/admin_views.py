@@ -56,10 +56,75 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         serializer.save()
         log_action(self.request.user, AuditLog.Action.UPDATE, instance=serializer.instance, request=self.request)
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        Permanently delete a user — Admin only, and only when the account is
+        INACTIVE. Guards protect against locking the org out or stranding work:
+          * cannot delete your own account
+          * cannot delete an ACTIVE user (deactivate first) -> 409
+          * cannot delete the last remaining active Admin -> 409
+          * cannot delete the sole approver of pending memos -> 409
+        """
+        instance = self.get_object()
+
+        if instance.id == request.user.id:
+            return Response({'detail': 'You cannot delete your own account.'},
+                            status=status.HTTP_409_CONFLICT)
+
+        if instance.is_active:
+            return Response({'detail': 'Deactivate the user before deleting.'},
+                            status=status.HTTP_409_CONFLICT)
+
+        is_admin = instance.is_staff or instance.is_superuser or instance.role == User.Roles.ADMIN
+        if is_admin:
+            other_admins = User.objects.exclude(id=instance.id).filter(
+                Q(is_active=True) & (Q(is_staff=True) | Q(is_superuser=True) | Q(role=User.Roles.ADMIN))
+            )
+            if not other_admins.exists():
+                return Response({'detail': 'Cannot delete the last remaining active Admin.'},
+                                status=status.HTTP_409_CONFLICT)
+
+        from memos.models import Memo
+        pending_memos = Memo.objects.filter(
+            current_approver=instance,
+            status__in=[Memo.Status.SUBMITTED, Memo.Status.UNDER_REVIEW],
+        )
+        if pending_memos.exists():
+            has_other_approver = User.objects.filter(
+                is_active=True, role__in=[User.Roles.APPROVER, User.Roles.ADMIN],
+            ).exclude(id=instance.id).exists()
+            if not has_other_approver:
+                return Response(
+                    {'detail': f'This user is the sole approver of {pending_memos.count()} pending '
+                               f'memo(s). Reassign or resolve them before deleting.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @transaction.atomic
     def perform_destroy(self, instance):
-        log_action(self.request.user, AuditLog.Action.DELETE, instance=instance, request=self.request)
+        # A permanent user removal intentionally clears their own leave history.
+        # The cascade collector re-instantiates each Leave, so the pre_delete
+        # guard (protect_approved_leave) would raise ProtectedError on approved
+        # leaves. Delete the user's leaves explicitly first with the guard flag
+        # set so the cascade that follows has nothing left to protect.
+        for leave in Leave.objects.filter(user=instance):
+            leave._allow_hard_delete = True
+            leave.delete()
+
+        # Snapshot the profile photo file so we can clean it up after the row is
+        # gone (FileField.delete() removes the file from storage).
+        photo = instance.profile_photo if instance.profile_photo else None
+
+        log_action(self.request.user, AuditLog.Action.DELETE, instance=instance,
+                   changes={'event': 'USER_DELETED', 'email': instance.email, 'role': instance.role},
+                   request=self.request)
         instance.delete()
+
+        if photo:
+            photo.delete(save=False)
 
     @action(detail=True, methods=['post'], url_path='reset-password')
     @transaction.atomic

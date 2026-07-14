@@ -1,0 +1,25 @@
+# Reverse proxy + static SPA host for the production stack (docker-compose.prod.yml).
+# SITE_DOMAIN is injected from the environment (your .env). With a real domain +
+# public ports 80/443, Caddy obtains and renews a TLS certificate automatically.
+#
+# Local test without a real domain / cert: set SITE_DOMAIN=:80 in .env to serve
+# plain HTTP on port 80 (also set the DJANGO_*_SECURE flags to False for that).
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	# API, Django admin, and Django-served assets go to Gunicorn. The SPA calls
+	# /api/v1 same-origin, so there is no CORS. Caddy forwards X-Forwarded-Proto,
+	# which Django uses (SECURE_PROXY_SSL_HEADER) to recognise HTTPS.
+	@backend path /api/* /admin/* /static/* /media/*
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else: the built SPA, with client-side routing fallback.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

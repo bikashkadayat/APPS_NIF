@@ -56,3 +56,15 @@ def notify(user, category, title, body="", action_url="", idempotency_key=None,
                               extra=email_context, object_id=object_id)
 
     return notif
+
+
+def resolve_source_notifications(prefix):
+    """Mark unread 'awaiting your review' notifications for a source object as read
+    once it no longer needs action (decided / deleted). `prefix` matches the
+    idempotency_key, e.g. 'leave-<id>-submitted' or 'takeout-<id>-submitted'. Keeps
+    the bell reconciled with the actionable pending queue."""
+    from django.utils import timezone
+    from .models import Notification
+    return (Notification.objects
+            .filter(idempotency_key__startswith=prefix, is_read=False)
+            .update(is_read=True, read_at=timezone.now()))

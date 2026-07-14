@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <style>
   @page { size: A4; margin: 22mm 16mm 18mm;
-    @bottom-center { content: "Official leave record - Nepal Internet Foundation"; font-size: 8px; color: #9ca3af; }
+    @bottom-center { content: "{{ org.name }} · {{ org.address }} · Phone: {{ org.tel }} · {{ org.email }}"; font-size: 8px; color: #9ca3af; }
     @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 8px; color: #9ca3af; }
   }
   body { font-family: "Inter", Helvetica, Arial, sans-serif; color: #1f2937; font-size: 11px; line-height: 1.5; }
@@ -36,8 +36,7 @@
         {% if logo %}<img class="letterhead-logo" src="{{ logo }}" alt="{{ org.name }}">{% endif %}
       </td>
       <td class="doc-meta">
-        <div class="org-name">{{ org.name|default:"Nepal Internet Foundation" }}</div>
-        <div class="org-meta">{{ org.address }}{% if org.website %} · {{ org.website }}{% endif %}</div>
+        {% include "pdf/_org_contact.html" %}
         <div class="org-meta">Generated: {{ generated_bs }} BS · {{ generated_ad }}</div>
       </td>
     </tr>

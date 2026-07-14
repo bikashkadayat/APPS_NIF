@@ -554,6 +554,26 @@ def apply_leave_policy(department, role, leave_type, days, effective_from, actor
 
 
 # ---------------------------------------------------------------------------
+# Approval routing
+# ---------------------------------------------------------------------------
+def department_has_dept_head(applicant):
+    """True if the applicant's department has at least one active Department Head
+    (role=checker) other than the applicant. Used to decide whether HR/Admin may
+    step in as a fallback grantor so a request can never get stuck with no one to
+    approve it. Scoped strictly to the applicant's department (no global fallback:
+    a global 'any Dept Head' would wrongly deny the HR/Admin fallback)."""
+    from users.models import User
+
+    qs = User.objects.filter(role=User.Roles.CHECKER, is_active=True).exclude(id=applicant.id)
+    if applicant.department_ref_id:
+        return qs.filter(department_ref_id=applicant.department_ref_id).exists()
+    if applicant.department:
+        return qs.filter(department__iexact=applicant.department).exists()
+    # Applicant has no department set: any active Dept Head can own the review.
+    return qs.exists()
+
+
+# ---------------------------------------------------------------------------
 # Simple-model leave balances (dashboard) - entitlements sourced from the CMS
 # LeaveType (configurable by HR/Admin), keyed by the lowercase LeaveBalance codes.
 # ---------------------------------------------------------------------------

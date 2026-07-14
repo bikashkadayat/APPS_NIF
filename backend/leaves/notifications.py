@@ -7,11 +7,14 @@ and the HR pool — never hardcoded — and every address is the user's account
 failure can NEVER break apply / approve / reject, and a transition can't send the
 same email twice.
 
+Workflow: the Department Head's approval is FINAL and grants the leave; HR and
+Admin get visibility/record copies but are not a second approval stage.
+
 Trigger map (see the four public functions):
-  1. leave_submitted   - new request  -> Dept Head(s) [+ HR CC]
-  2. leave_l1_approved - Dept Head OK  -> HR [+ employee "stage 1 passed"]
-  3. leave_finalized   - HR decision   -> employee [+ audit copy]
-  4. leave_rejected_l1 - Dept Head NO  -> employee (reason mandatory)
+  1. leave_submitted   - new request       -> Dept Head(s) [+ HR & Admin record]
+  2. leave_l1_approved - (legacy two-stage) -> HR [+ employee "stage 1 passed"]
+  3. leave_finalized   - grant/HR decision  -> employee [+ HR & Admin record]
+  4. leave_rejected_l1 - Dept Head reject   -> employee (reason) [+ HR & Admin record]
 """
 import logging
 
@@ -68,6 +71,24 @@ def _hr_users(exclude=None):
     return list(qs)
 
 
+def _admin_users(exclude=None):
+    qs = User.objects.filter(role=User.Roles.ADMIN, is_active=True)
+    if exclude is not None:
+        qs = qs.exclude(id=exclude.id)
+    return list(qs)
+
+
+def _record_recipients(exclude=None):
+    """HR + Admin, deduplicated — the oversight audience that is notified for the
+    record on submit and on the Department Head's decision (they do not act)."""
+    seen, out = set(), []
+    for u in _hr_users(exclude=exclude) + _admin_users(exclude=exclude):
+        if u.id not in seen:
+            seen.add(u.id)
+            out.append(u)
+    return out
+
+
 def _actor_line(actor, when):
     if not actor:
         return ""
@@ -98,24 +119,33 @@ def _detail_ctx(leave, status_key, actor_line="", remarks=""):
 # Trigger 1 — new request submitted
 # ---------------------------------------------------------------------------
 def leave_submitted(leave):
+    from .approvals import actionable_approver_ids
     ctx, days = _detail_ctx(leave, "submitted")
     emp, ltype = ctx["employee_name"], ctx["leave_type"]
     title = f"New Leave Request — {emp} ({ltype})"
     body = f"{emp} submitted a {ltype} request for {days} working day(s), awaiting your review."
 
-    for head in _dept_heads(leave.user):
-        _safe(f"submitted->head:{head.id}", lambda head=head: notify(
-            head, Category.LEAVE_SUBMITTED, title, body, action_url="/leave/pending",
-            idempotency_key=f"leave-{leave.id}-submitted-head-{head.id}",
+    # SINGLE SOURCE: the exact user(s) who must act (Dept Head, or HR fallback when
+    # the department has no active Dept Head). These are guaranteed to find the
+    # leave in their pending queue (leaves.approvals.pending_actionable_leaves).
+    actionable = actionable_approver_ids(leave)
+    for approver in User.objects.filter(id__in=actionable):
+        _safe(f"submitted->approver:{approver.id}", lambda approver=approver: notify(
+            approver, Category.LEAVE_SUBMITTED, title, body, action_url="/leave/pending",
+            idempotency_key=f"leave-{leave.id}-submitted-head-{approver.id}",
             email_context=ctx, object_id=leave.id,
         ))
 
+    # HR + Admin copied for visibility/record — but NOT anyone already actionable
+    # (an HR fallback grantor gets the actionable notice, not a CC).
     if getattr(settings, "NOTIFY_CC_HR_ON_SUBMIT", True):
-        for hr in _hr_users():
-            _safe(f"submitted->hrcc:{hr.id}", lambda hr=hr: notify(
-                hr, Category.LEAVE_SUBMITTED, f"{title} (CC)",
+        for u in _record_recipients():
+            if u.id in actionable:
+                continue
+            _safe(f"submitted->cc:{u.id}", lambda u=u: notify(
+                u, Category.LEAVE_SUBMITTED, f"{title} (CC)",
                 body + " You are copied for visibility.", action_url="/leave/pending",
-                idempotency_key=f"leave-{leave.id}-submitted-hrcc-{hr.id}",
+                idempotency_key=f"leave-{leave.id}-submitted-cc-{u.id}",
                 email_context=ctx, object_id=leave.id,
             ))
 
@@ -153,14 +183,17 @@ def leave_l1_approved(leave):
 def leave_finalized(leave):
     approved = leave.status == Leave.Status.APPROVED
     status_key = "approved" if approved else "rejected"
-    actor = leave.hr_reviewer or leave.approver
-    actor_line = _actor_line(actor, leave.hr_action_date)
+    # Whoever finalized it: the Department Head grants directly now, so fall back
+    # to the DH reviewer/date when HR did not act (legacy two-stage still works).
+    actor = leave.hr_reviewer or leave.department_head_reviewer or leave.approver
+    when = leave.hr_action_date or leave.department_head_action_date
+    actor_line = _actor_line(actor, when)
     ctx, days = _detail_ctx(leave, status_key, actor_line=actor_line, remarks=leave.remarks or "")
     dates = f"{ctx['start_ad']} to {ctx['end_ad']}"
 
     if approved:
         title, cat = f"Leave Approved — {dates}", Category.LEAVE_APPROVED
-        body = f"Your {ctx['leave_type']} ({days} working day(s)) has been approved."
+        body = f"Your {ctx['leave_type']} ({days} working day(s)) has been approved and granted."
     else:
         title, cat = f"Leave Rejected — {dates}", Category.LEAVE_REJECTED
         body = f"Your {ctx['leave_type']} request has been rejected."
@@ -171,14 +204,15 @@ def leave_finalized(leave):
         email_context=ctx, object_id=leave.id,
     ))
 
-    if getattr(settings, "NOTIFY_AUDIT_COPY_ON_FINAL", False):
-        audience = _dept_heads(leave.user) + _hr_users()
-        for u in audience:
-            _safe(f"final->audit:{u.id}", lambda u=u: notify(
-                u, cat, f"{title} (audit copy)",
+    # Record copy to HR + Admin (oversight; not an approval step). Excludes the
+    # actor so a fallback-granting HR user is not notified about their own action.
+    if getattr(settings, "NOTIFY_AUDIT_COPY_ON_FINAL", True):
+        for u in _record_recipients(exclude=actor):
+            _safe(f"final->record:{u.id}", lambda u=u: notify(
+                u, cat, f"{title} (record)",
                 f"{ctx['employee_name']}'s {ctx['leave_type']} was {status_key}.",
                 action_url="/leave/pending",
-                idempotency_key=f"leave-{leave.id}-final-{status_key}-audit-{u.id}",
+                idempotency_key=f"leave-{leave.id}-final-{status_key}-record-{u.id}",
                 email_context=ctx, object_id=leave.id,
             ))
 
@@ -198,3 +232,15 @@ def leave_rejected_l1(leave):
         idempotency_key=f"leave-{leave.id}-final-rejected",
         email_context=ctx, object_id=leave.id,
     ))
+
+    # Record copy to HR + Admin (oversight; not an approval step).
+    actor = leave.department_head_reviewer or leave.approver
+    if getattr(settings, "NOTIFY_AUDIT_COPY_ON_FINAL", True):
+        for u in _record_recipients(exclude=actor):
+            _safe(f"l1reject->record:{u.id}", lambda u=u: notify(
+                u, Category.LEAVE_REJECTED, f"Leave Rejected — {dates} (record)",
+                f"{ctx['employee_name']}'s {ctx['leave_type']} was rejected by the Department Head.",
+                action_url="/leave/pending",
+                idempotency_key=f"leave-{leave.id}-final-rejected-record-{u.id}",
+                email_context=ctx, object_id=leave.id,
+            ))

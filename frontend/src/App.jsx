@@ -46,6 +46,13 @@ const ReportBuilder = lazy(() => import('./pages/reports/ReportBuilder'));
 const ReportHistory = lazy(() => import('./pages/reports/ReportHistory'));
 const Analytics = lazy(() => import('./pages/admin/Analytics'));
 
+const InventoryList = lazy(() => import('./pages/inventory/InventoryList'));
+const InventoryItemDetail = lazy(() => import('./pages/inventory/InventoryItemDetail'));
+const AssetAssignment = lazy(() => import('./pages/inventory/AssetAssignment'));
+const MyAssignedAssets = lazy(() => import('./pages/inventory/MyAssignedAssets'));
+const MyTakeOutRequests = lazy(() => import('./pages/inventory/MyTakeOutRequests'));
+const TakeOutApprovals = lazy(() => import('./pages/inventory/TakeOutApprovals'));
+
 const MemoList = lazy(() => import('./pages/memo/MemoList'));
 const CreateMemo = lazy(() => import('./pages/memo/CreateMemo'));
 const MyMemos = lazy(() => import('./pages/memo/MyMemos'));
@@ -97,6 +104,14 @@ function App() {
 
           {/* Phase 9 - Notifications */}
           <Route path="notifications" element={<NotificationsPage />} />
+
+          {/* Inventory Management */}
+          <Route path="inventory" element={<RequireAuth allowedRoles={['checker', 'approver', 'admin']}><InventoryList /></RequireAuth>} />
+          <Route path="inventory/items/:id" element={<RequireAuth allowedRoles={['checker', 'approver', 'admin']}><InventoryItemDetail /></RequireAuth>} />
+          <Route path="inventory/assignment" element={<RequireAuth allowedRoles={['checker', 'approver', 'admin']}><AssetAssignment /></RequireAuth>} />
+          <Route path="inventory/my-assets" element={<MyAssignedAssets />} />
+          <Route path="inventory/my-requests" element={<RequireAuth allowedRoles={['maker', 'checker', 'approver']}><MyTakeOutRequests /></RequireAuth>} />
+          <Route path="inventory/approvals" element={<RequireAuth allowedRoles={['checker', 'approver', 'admin']}><TakeOutApprovals /></RequireAuth>} />
 
           {/* Phase 3 - Memos (specific paths before /memos/:id) */}
           <Route path="memos" element={<MemoList />} />

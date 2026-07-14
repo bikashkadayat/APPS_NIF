@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLeaves } from '../../hooks/useLeaves';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import { useAuth } from '../../hooks/useAuth';
 import Badge from '../../components/common/Badge';
 import LeaveDocActions from '../../components/documents/LeaveDocActions';
@@ -15,6 +16,7 @@ const MyApplications = () => {
   useEffect(() => {
     fetchLeaves();
   }, [fetchLeaves]);
+  useAutoRefresh(fetchLeaves, 20000); // keep the list fresh (poll + focus)
 
   // Prevent approvers from accessing this page
   if (role === 'approver') {

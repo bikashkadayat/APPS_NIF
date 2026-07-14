@@ -57,7 +57,10 @@ const UserSelector = ({ role, value, onChange, allowAuto = true }) => {
           {filtered.map((u) => (
             <button key={u.id} type="button" role="option" aria-selected={String(u.id) === String(value)}
               className={`lr-userselect-opt ${String(u.id) === String(value) ? 'on' : ''}`} onClick={() => pick(String(u.id))}>
-              <div>{u.full_name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span>{u.full_name}</span>
+                {u.role_display && <span className="chip ch-checking" style={{ fontSize: 10, flexShrink: 0 }}>{u.role_display}</span>}
+              </div>
               {u.department && <div className="lr-userselect-sub">{u.department}</div>}
             </button>
           ))}

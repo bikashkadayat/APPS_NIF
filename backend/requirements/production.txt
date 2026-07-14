@@ -9,6 +9,6 @@ gunicorn==26.0.0
 whitenoise[brotli]==6.12.0
 
 # Optional: object storage for media when USE_S3=True. Not installed by default
-# because the standard deployment uses the Render persistent disk. To enable
+# because the standard deployment stores media on the container filesystem. To enable
 # S3 / Cloudflare R2 / MinIO, add to your image build:
 #   django-storages[boto3]==1.14.4

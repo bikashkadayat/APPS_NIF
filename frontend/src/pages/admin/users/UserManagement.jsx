@@ -156,14 +156,17 @@ const UserManagement = () => {
       if (type === 'deactivate') return userMgmtService.deactivate(user.id);
       if (type === 'activate') return userMgmtService.activate(user.id);
       if (type === 'role') return userMgmtService.changeRole(user.id, role);
+      if (type === 'delete') return userMgmtService.remove(user.id);
       return null;
     },
     onSuccess: (res, vars) => {
       invalidate();
       setConfirm(null);
       if (vars.type === 'reset') setCredentials({ email: vars.user.email, password: res.generated_password });
+      else if (vars.type === 'delete') setToast({ message: `${vars.user.full_name || vars.user.email} deleted.`, tone: 'success' });
       else setToast({ message: 'Done.', tone: 'success' });
     },
+    // 409 guard messages (active user / last admin / sole approver) surface here verbatim.
     onError: (e) => setToast({ message: e?.response?.data?.detail || 'Action failed.', tone: 'error' }),
   });
 
@@ -212,6 +215,15 @@ const UserManagement = () => {
                     {u.is_active
                       ? <button type="button" className="lr-btn lr-btn-ghost" onClick={() => setConfirm({ type: 'deactivate', user: u })}>Deactivate</button>
                       : <button type="button" className="lr-btn lr-btn-ghost" onClick={() => setConfirm({ type: 'activate', user: u })}>Activate</button>}
+                    <button
+                      type="button"
+                      className="lr-btn lr-btn-danger"
+                      disabled={u.is_active}
+                      title={u.is_active ? 'Deactivate first' : 'Permanently delete this user'}
+                      onClick={() => setConfirm({ type: 'delete', user: u })}
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -226,15 +238,16 @@ const UserManagement = () => {
       {confirm && (
         <ConfirmModal
           title={{
-            reset: 'Reset password', deactivate: 'Deactivate user', activate: 'Activate user', role: 'Change role',
+            reset: 'Reset password', deactivate: 'Deactivate user', activate: 'Activate user', role: 'Change role', delete: 'Delete user',
           }[confirm.type]}
           message={{
             reset: `Generate a new temporary password for ${confirm.user.email}? They must change it on next login.`,
             deactivate: `Deactivate ${confirm.user.email}? They will be blocked at login.`,
             activate: `Reactivate ${confirm.user.email}?`,
             role: `Change ${confirm.user.email}'s role to "${roleLabel(confirm.role)}"?`,
+            delete: `Permanently delete ${confirm.user.full_name || confirm.user.email}? This cannot be undone.`,
           }[confirm.type]}
-          danger={confirm.type === 'deactivate'}
+          danger={confirm.type === 'deactivate' || confirm.type === 'delete'}
           confirmLabel="Confirm"
           busy={doAction.isPending}
           onClose={() => setConfirm(null)}

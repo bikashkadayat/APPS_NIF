@@ -1,37 +1,96 @@
-# Deployment — Vercel (frontend) + Render (backend)
+# Deployment — self-hosted VPS (Docker Compose)
 
-This app is **split-deployed**: the React/Vite SPA runs on Vercel, and the
-Django + PostgreSQL API runs on Render. Vercel cannot run the backend (it needs
-PostgreSQL, WeasyPrint's Cairo/Pango system libraries, background threads and
-persistent file storage), so the two are deployed separately and the Vercel
-frontend proxies `/api/v1/*` to Render.
+The whole stack runs on a single VPS with Docker Compose. The production stack
+(`docker-compose.prod.yml`) bundles a **Caddy** reverse proxy that terminates
+TLS (automatic HTTPS), serves the pre-built React SPA, and proxies the API to
+Gunicorn — so the browser is always same-origin (no CORS).
 
-> Why your first Vercel attempt failed:
-> `ImproperlyConfigured: DJANGO_SECRET_KEY must be set when DEBUG is off`.
-> Vercel was building from the repo **root**, found `backend/manage.py`, and
-> tried to boot Django. The fix is Step 2.1 below: set the Vercel project's
-> **Root Directory** to `frontend` so Vercel only builds the SPA.
+Services: `db` (PostgreSQL), `backend` (Django + Gunicorn + WeasyPrint), `cron`
+(scheduled jobs), `web` (Caddy: TLS + built SPA + reverse proxy).
+
+> Requirements: a VPS with Docker + the Docker Compose plugin, a domain name
+> whose DNS A/AAAA record points at the VPS IP, and public ports 80 + 443.
 
 ---
 
-## 1. Backend → Render (do this first; you need its URL for the frontend)
+## Dev vs prod — which compose file
 
-1. Push this repo to GitHub (already done).
-2. Render Dashboard → **New → Blueprint** → select this repository.
-   Render reads `render.yaml` and provisions:
-   - a free PostgreSQL database (`nif-db`), and
-   - a Docker web service (`nif-backend`) built from `Dockerfile.backend`.
-3. Click **Apply**. First build takes a few minutes (system libs + pip install).
-   On start the container runs `migrate` + `collectstatic` + `gunicorn`.
-4. When it's live, note the URL, e.g. `https://nif-backend.onrender.com`.
-   Check `https://nif-backend.onrender.com/api/v1/health/` returns `200`.
+| | File | Command | TLS | Frontend | Security flags |
+|---|---|---|---|---|---|
+| **Local dev** | `docker-compose.yml` | `docker compose up` | none (HTTP) | Vite dev server `:5173` | forced **off** (localhost) |
+| **Production** | `docker-compose.prod.yml` | `docker compose -f docker-compose.prod.yml up -d --build` | Caddy auto-HTTPS | built `dist` via Caddy | secure by default |
 
-### 1.1 Create the first admin user
+The two stacks are independent. This guide is entirely about the **prod** stack.
 
-The database starts empty. Open the service's **Shell** tab in Render and run:
+---
+
+## 1. Get the code onto the VPS
 
 ```bash
-python manage.py shell -c "
+git clone <your-repo-url> nif && cd nif
+```
+
+## 2. Configure `.env`
+
+```bash
+cp .env.example .env
+```
+
+Fill in **every** value below (the prod stack refuses to start if a required one
+is missing). Example values are for `https://nif.example.com`.
+
+| Variable | Example | Notes |
+|---|---|---|
+| `DJANGO_SECRET_KEY` | *(random)* | `python -c "from django.core.management.utils import get_random_secret_key as g; print(g())"` |
+| `DJANGO_DEBUG` | `False` | must be `False` in prod |
+| `DJANGO_ALLOWED_HOSTS` | `nif.example.com` | your domain; `localhost,127.0.0.1` are appended automatically |
+| `SITE_DOMAIN` | `nif.example.com` | domain Caddy serves + gets a TLS cert for |
+| `DATABASE_PASSWORD` | *(strong)* | |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://nif.example.com` | **required** — admin/session POSTs 403 without it |
+| `FRONTEND_URL` | `https://nif.example.com` | email action links |
+| `SITE_URL` | `https://nif.example.com` | PDF QR verification URLs |
+
+Security flags default to secure (`SSL_REDIRECT`, `SESSION_COOKIE_SECURE`,
+`CSRF_COOKIE_SECURE` = True; `HSTS = 31536000`). Leave them unset in prod.
+
+**Email (SMTP).** To actually send mail, set `EMAIL_BACKEND` to the SMTP backend
+and all of `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` — the app
+**fails fast at boot** if SMTP is selected but any of those are empty:
+
+```dotenv
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=apikey-or-user
+EMAIL_HOST_PASSWORD=your-smtp-password
+EMAIL_USE_TLS=True
+DEFAULT_FROM_EMAIL=no-reply@nif.example.com
+```
+
+Leave `EMAIL_BACKEND` unset for a mail-less deployment (emails print to logs).
+
+`.env` is gitignored — never commit it.
+
+## 3. Build and start
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+`backend` runs `migrate` + `collectstatic` + Gunicorn on start; `web` builds the
+SPA and starts Caddy, which fetches the TLS certificate (needs DNS + ports 80/443
+reachable). Watch progress:
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f web backend
+```
+
+## 4. Create the first admin user
+
+The database starts empty:
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend python manage.py shell -c "
 from users.models import User
 u,_=User.objects.get_or_create(username='admin', defaults={'email':'admin@nif.test'})
 u.email='admin@nif.test'; u.role=User.Roles.ADMIN; u.is_active=True; u.is_staff=True
@@ -40,56 +99,59 @@ print('admin ready:', u.email)
 "
 ```
 
-Log in with that account, then create the other users from the Admin console.
+Log in, then create the other users from the Admin console.
 
 ---
 
-## 2. Frontend → Vercel
+## 5. Reverse proxy — already included
 
-### 2.1 Point Vercel at the `frontend/` subdirectory (fixes the build error)
+The `web` service **is** the reverse proxy (Caddy). No separate nginx setup is
+needed. It routes:
 
-Vercel Project → **Settings → Build & Deployment → Root Directory** → set to
-**`frontend`** → Save. This makes Vercel detect Vite and ignore `backend/`.
+- `/api/*`, `/admin/*`, `/static/*`, `/media/*` → `backend:8000` (Gunicorn)
+- everything else → the built SPA (`/srv`) with SPA fallback to `index.html`
 
-### 2.2 Wire the API proxy to your Render backend
+Config lives in `deploy/Caddyfile`; the domain comes from `SITE_DOMAIN`. Caddy
+forwards `X-Forwarded-Proto`, which Django reads (`SECURE_PROXY_SSL_HEADER`) to
+recognise the forwarded HTTPS and avoid redirect loops.
 
-Edit **`frontend/vercel.json`** and replace the placeholder host with your real
-Render URL from Step 1.4:
-
-```json
-{ "source": "/api/v1/:path*",
-  "destination": "https://nif-backend.onrender.com/api/v1/:path*" }
-```
-
-Commit + push. The SPA keeps calling the relative `/api/v1`, and Vercel proxies
-those to Render server-side — so there are **no CORS issues and no frontend code
-changes**.
-
-### 2.3 Deploy
-
-Because the repo is connected to Vercel via Git, pushing to `main` triggers a
-deploy automatically. Otherwise click **Redeploy** in the Vercel dashboard.
+To run a **local HTTP test** without a real domain/cert, set `SITE_DOMAIN=:80`
+and the three `DJANGO_*_SECURE` flags to `False` in `.env`.
 
 ---
 
-## 3. Verify
+## 6. Verify
 
-1. Open your Vercel URL, e.g. `https://your-app.vercel.app`.
-2. Log in with the admin account from Step 1.1.
-3. Create a memo, submit, review, approve, download the PDF.
+1. Open `https://nif.example.com` — valid TLS padlock.
+2. Log in with the admin account from Step 4.
+3. Create a memo, submit, review, approve, download the PDF (QR link uses your
+   domain).
+
+Run the post-deploy checklist below.
+
+### Post-deploy checklist
+
+- [ ] Site loads over **HTTPS** with a valid certificate.
+- [ ] Session/CSRF cookies have the **Secure** flag (browser dev tools → Application → Cookies).
+- [ ] Response carries **`Strict-Transport-Security`** (HSTS) — `curl -sI https://nif.example.com | grep -i strict`.
+- [ ] Admin login + a POST from the domain succeed (**no CSRF 403**).
+- [ ] A test email sends (`docker compose -f docker-compose.prod.yml exec backend python manage.py sendtestemail you@example.com`).
+- [ ] Email action links + PDF QR URLs point at **`https://nif.example.com`**, not localhost.
+- [ ] Upload a profile photo, then `docker compose -f docker-compose.prod.yml up -d --build` again — the photo **survives** (media volume).
 
 ---
 
 ## Notes / production hardening
 
-- **Free tiers sleep**: the free Render web service spins down when idle (first
-  request after idle is slow), and the free Render Postgres expires after ~30
-  days. Upgrade for anything real.
-- **Attachments**: the `disk:` in `render.yaml` persists uploads on that
-  instance. For multi-instance or durable storage, switch `DEFAULT_FILE_STORAGE`
-  to S3 (django-storages).
-- **CORS**: not needed with the Vercel rewrite (same-origin). If you instead set
-  an absolute `VITE_API_URL` at build time, also set `CORS_ALLOWED_ORIGINS` to
-  your Vercel domain in `render.yaml`.
-- **Secrets**: `DJANGO_SECRET_KEY` is generated by Render and never committed.
-  The insecure defaults in `Dockerfile.backend` are overridden by `render.yaml`.
+- **Media persistence**: uploaded attachments, profile photos and generated PDFs
+  live in the named Docker volume `media_data` (mounted at `/app/media` on both
+  `backend` and `cron`), so they survive rebuilds, restarts and redeploys. For
+  multi-instance / durable object storage, set `USE_S3=True` and the `AWS_*`
+  vars in `.env` (needs `django-storages[boto3]` — see `backend/requirements/`).
+- **Database backups**: `postgres_data` is a named volume — back it up regularly,
+  e.g. `docker compose -f docker-compose.prod.yml exec db pg_dump -U leave_user leave_system > backup.sql`.
+- **Static files**: served by WhiteNoise from within Gunicorn (content-hashed,
+  far-future cache headers); `collectstatic` runs on every backend start.
+- **Secrets**: `DJANGO_SECRET_KEY`, DB credentials and SMTP come from `.env` only;
+  the insecure defaults baked into `Dockerfile.backend` are always overridden.
+- **Updating**: `git pull && docker compose -f docker-compose.prod.yml up -d --build`.

@@ -14,6 +14,14 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      // Uploaded media (profile photos, memo attachments) live on the backend.
+      // Without this, /media/* falls through to the SPA index.html and every
+      // <img src="/media/..."> renders broken.
+      '/media': {
+        target: apiUrl,
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 })

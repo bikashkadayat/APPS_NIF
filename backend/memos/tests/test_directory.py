@@ -28,8 +28,11 @@ def test_email_not_exposed_in_directory(api, maker, checker):
     resp = api.get("/api/v1/memos/available-checkers/", {"search": "checker"})
     assert resp.status_code == 200 and resp.data
     row = resp.data[0]
-    assert set(row.keys()) == {"id", "full_name", "department"}
-    assert "email" not in row and "role" not in row
+    # Role is now included so the picker can show a Dept Head/HR/Admin badge;
+    # email is still never exposed (H5: no PII / roster enumeration).
+    assert set(row.keys()) == {"id", "full_name", "department", "role", "role_display"}
+    assert "email" not in row
+    assert row["role"] == "checker"
 
 
 @pytest.mark.django_db

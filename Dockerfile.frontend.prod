@@ -1,0 +1,23 @@
+# Production frontend image: build the SPA, then serve it behind Caddy.
+# Used only by docker-compose.prod.yml. Local dev keeps using Dockerfile.frontend
+# (the Vite dev server).
+
+# --- Stage 1: build the static bundle -------------------------------------
+# Node 22 LTS satisfies Vite 8's Node >= 20.19 requirement.
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+COPY frontend/ .
+# The SPA calls the API same-origin (axios baseURL '/api/v1'), so no backend URL
+# is baked in — the reverse proxy routes /api to Gunicorn. `npm run build`
+# emits the optimized, minified bundle to /app/dist.
+RUN npm run build
+
+# --- Stage 2: serve dist + reverse-proxy the API --------------------------
+FROM caddy:2-alpine
+# Built SPA assets.
+COPY --from=build /app/dist /srv
+# Proxy + static-host config (uses ${SITE_DOMAIN} from the environment).
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+EXPOSE 80 443

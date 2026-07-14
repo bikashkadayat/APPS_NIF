@@ -244,8 +244,11 @@ def submit_memo(memo, actor, override_reviewer_id=None, request=None):
     # Hybrid assignment: use the maker's chosen checker when provided, else
     # auto-resolve by department config (existing default behavior).
     if override_reviewer_id:
+        # A maker may route to any memo-approval-eligible user: Department Head,
+        # HR, or Admin (matches the assign-checker picker).
         reviewer = _resolve_manual_assignee(
-            override_reviewer_id, [User.Roles.CHECKER, User.Roles.ADMIN], actor, "checker")
+            override_reviewer_id,
+            [User.Roles.CHECKER, User.Roles.APPROVER, User.Roles.ADMIN], actor, "checker")
     else:
         reviewer = resolve_next_reviewer(memo)
     if reviewer is None:
