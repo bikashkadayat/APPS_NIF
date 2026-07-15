@@ -151,13 +151,15 @@ class MemoDetailSerializer(serializers.ModelSerializer):
         return user if getattr(user, "is_authenticated", False) else None
 
     def get_attachment_url(self, obj):
-        # Never expose the raw MEDIA path. Point at the authenticated download
-        # endpoint, which enforces CanViewMemo and forces a download (C2).
+        # Short-lived signed download URL (documents.protected_media). Object-level
+        # access is enforced here: this URL is only produced when the memo was
+        # serialized behind CanViewMemo, and it expires quickly. Never a raw
+        # /media/ path; forced as a download (C2). The gated
+        # /api/v1/memos/{id}/attachment/ endpoint remains for blob clients.
         if not obj.attachment:
             return None
-        path = f"/api/v1/memos/{obj.id}/attachment/"
-        request = self.context.get("request")
-        return request.build_absolute_uri(path) if request is not None else path
+        from documents.protected_media import signed_media_url
+        return signed_media_url(obj.attachment.name, ttl=600, download=True)
 
     def _is_admin(self, user):
         return user is not None and user.role == User.Roles.ADMIN

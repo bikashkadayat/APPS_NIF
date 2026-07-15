@@ -1,14 +1,34 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Header from './Header';
 import LeaveSidebar from './LeaveSidebar';
+import IdleWarningModal from '../common/IdleWarningModal';
+import { useAuth } from '../../hooks/useAuth';
+import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 
 const DESKTOP_MQ = '(min-width: 1024px)';
+// Idle auto-logout (configurable via VITE_IDLE_TIMEOUT_MIN; default 20 min).
+const IDLE_MIN = Number(import.meta.env.VITE_IDLE_TIMEOUT_MIN) || 20;
+const IDLE_MS = IDLE_MIN * 60 * 1000;
+const WARN_MS = 30 * 1000;
 
 const Layout = () => {
   const [open, setOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
+  const { logout } = useAuth();
   const close = useCallback(() => setOpen(false), []);
+
+  // Idle auto-logout: clear + blacklist tokens (useAuth.logout) and return to login.
+  const handleIdleTimeout = useCallback(async () => {
+    try { await logout(); } finally {
+      try { localStorage.setItem('loggedOutReason', 'inactivity'); } catch { /* ignore */ }
+      navigate('/login', { replace: true });
+    }
+  }, [logout, navigate]);
+  const { warning, remaining, stayActive } = useIdleTimeout({
+    timeoutMs: IDLE_MS, warningMs: WARN_MS, onTimeout: handleIdleTimeout,
+  });
 
   // Auto-close the drawer on route change (nav-link click navigates then closes).
   useEffect(() => { setOpen(false); }, [location.pathname]);
@@ -63,6 +83,7 @@ const Layout = () => {
         </main>
       </div>
       <div className={`drawer-backdrop ${open ? 'show' : ''}`} onClick={close} aria-hidden="true" />
+      {warning && <IdleWarningModal remaining={remaining} onStay={stayActive} onLogout={handleIdleTimeout} />}
     </>
   );
 };

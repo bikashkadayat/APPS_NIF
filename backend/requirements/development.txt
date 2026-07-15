@@ -5,3 +5,8 @@
 # Test suite
 pytest==9.1.1
 pytest-django==4.12.0
+pytest-cov==5.0.0
+
+# Lint + dependency audit (CI quality/security gates)
+ruff==0.6.9
+pip-audit==2.7.3

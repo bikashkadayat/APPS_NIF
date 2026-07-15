@@ -155,6 +155,9 @@ def test_detail_serializer_does_not_leak_media_path(api, maker):
     api.force_authenticate(maker)
     resp = api.get(f"/api/v1/memos/{memo.id}/")
     assert resp.status_code == 200
-    # The raw "attachment" media path is no longer exposed; only the gated URL.
+    # The raw "attachment" media path is never exposed; the download URL is a
+    # short-lived SIGNED url (documents.protected_media), not a public /media/ path.
     assert "attachment" not in resp.data
-    assert resp.data["attachment_url"].endswith(f"/memos/{memo.id}/attachment/")
+    url = resp.data["attachment_url"]
+    assert url.startswith("/api/v1/media/?") and "s=" in url and "dl=1" in url
+    assert "/media/memos/" not in url  # never the raw storage path

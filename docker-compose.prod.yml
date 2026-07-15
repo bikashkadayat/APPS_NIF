@@ -121,15 +121,21 @@ services:
       - AWS_S3_ENDPOINT_URL=${AWS_S3_ENDPOINT_URL:-}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      # Encrypted off-host DB backup (deploy/backup.sh). Set the key + a target.
+      - BACKUP_ENCRYPTION_KEY=${BACKUP_ENCRYPTION_KEY:-}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
+      - BACKUP_S3_BUCKET=${BACKUP_S3_BUCKET:-}
+      - BACKUP_RSYNC_TARGET=${BACKUP_RSYNC_TARGET:-}
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - media_data:/app/media
+      - backups_data:/backups
     # cron strips the environment, so persist the runtime env for jobs, install
     # the crontab (baked into the image at /app/deploy/crontab), and run cron -f.
     command: >
-      bash -c "printenv | grep -E '^(DATABASE_|DJANGO_|EMAIL_|DEFAULT_FROM_EMAIL|FRONTEND_URL|SITE_URL|USE_S3|AWS_)' > /etc/environment &&
+      bash -c "printenv | grep -E '^(DATABASE_|DJANGO_|EMAIL_|DEFAULT_FROM_EMAIL|FRONTEND_URL|SITE_URL|USE_S3|AWS_|BACKUP_)' > /etc/environment &&
                crontab /app/deploy/crontab &&
                cron -f"
 
@@ -157,5 +163,6 @@ services:
 volumes:
   postgres_data:
   media_data:
+  backups_data:
   caddy_data:
   caddy_config:

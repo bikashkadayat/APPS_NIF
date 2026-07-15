@@ -67,7 +67,9 @@ class ReportsViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.
     @action(detail=True, methods=["get"], url_path="status")
     def report_status(self, request, pk=None):
         run = self.get_object()
-        return Response({"id": str(run.id), "status": run.status, "error": run.error, "file_url": run.file_url})
+        from documents.protected_media import signed_media_url
+        file_url = signed_media_url(run.file.name, ttl=600, download=True) if run.file else None
+        return Response({"id": str(run.id), "status": run.status, "error": run.error, "file_url": file_url})
 
     @action(detail=True, methods=["get"], url_path="download")
     def download(self, request, pk=None):

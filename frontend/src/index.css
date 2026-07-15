@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&family=Poppins:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&family=Poppins:wght@600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap');
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -261,66 +261,212 @@ body {
 .page { padding: 48px; max-width: 1400px; margin: 0 auto; animation: pageIn 0.4s ease both; }
 @keyframes pageIn { from { opacity: 0; } to { opacity: 1; } }
 
-/* ── ENTERPRISE LOGIN (centered authentication card) ── */
+/* ── NIF LOGIN — split-hero with subtle Nepali motifs ── */
 .login-page {
+  --nif-navy: #1e3a8a;
+  --nif-crimson: #DC143C;
+  --nif-gold: #C9A227;
+  --nif-ivory: #fbf9f3;
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
-  place-items: center;
-  padding: 40px 20px;
+  grid-template-columns: 1fr;             /* mobile/tablet: card only */
   background:
-    radial-gradient(1100px 560px at 50% -12%, rgba(39, 64, 149, 0.10), transparent 62%),
-    linear-gradient(180deg, #eef2f8 0%, #f0f4f8 100%);
+    radial-gradient(1000px 520px at 50% -14%, rgba(30, 58, 138, 0.08), transparent 62%),
+    linear-gradient(180deg, var(--nif-ivory) 0%, #f1efe8 100%);
+}
+@media (min-width: 1024px) {
+  .login-page { grid-template-columns: 1.05fr 1fr; }   /* branded hero | card */
+}
+
+/* ---- Branded hero (desktop only): mandala + Himalaya + bilingual brand ---- */
+.login-hero { display: none; }
+@media (min-width: 1024px) {
+  .login-hero {
+    position: relative;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    overflow: hidden; color: #fff;
+    background:
+      radial-gradient(700px 440px at 50% 6%, rgba(120,160,255,0.10), transparent 62%),
+      linear-gradient(180deg, #101f52 0%, #172c6e 48%, #21418f 100%);
+  }
+}
+.hero-mandala {
+  position: absolute; top: -76px; right: -76px;
+  width: 500px; height: 500px;
+  color: rgba(255,255,255,0.13);          /* refined guilloché watermark */
+  pointer-events: none;
+}
+.hero-mandala .mandala-accent { stroke: rgba(220,20,60,0.16); } /* sparse crimson ring */
+.mandala-spin {
+  transform-box: fill-box; transform-origin: center;
+  animation: mandalaSpin 140s linear infinite;   /* barely-there drift */
+}
+@keyframes mandalaSpin { to { transform: rotate(360deg); } }
+.hero-himalaya {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  width: 100%; height: 240px; pointer-events: none;
+}
+.hero-himalaya .ridge-back { fill: rgba(255,255,255,0.05); }   /* distant, hazier */
+.hero-himalaya .ridge-mid  { fill: rgba(255,255,255,0.08); }
+.hero-himalaya .ridge-front { fill: rgba(255,255,255,0.12); }  /* nearest, defined */
+.hero-content {
+  position: relative; z-index: 1; text-align: center; padding: 40px;
+  animation: authCardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* Soft radial glow lifting the NIF logo off the background */
+.hero-content::before {
+  content: ''; position: absolute; top: -24px; left: 50%;
+  width: 300px; height: 300px; transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(130,170,255,0.20) 0%, rgba(130,170,255,0.05) 45%, transparent 70%);
+  border-radius: 50%; z-index: -1; pointer-events: none;
+}
+.hero-logo {
+  width: 220px; max-width: 60%; height: auto;
+  background: #fff; padding: 14px 20px; border-radius: 16px;
+  box-shadow: 0 14px 44px rgba(0,0,0,0.20); margin-bottom: 28px;
+}
+.hero-name-en {
+  font-family: 'Poppins', Inter, sans-serif;
+  font-size: 22px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; line-height: 1.25;
+}
+.hero-name-en::after {                    /* thin crimson flag flourish */
+  content: ''; display: block; width: 54px; height: 3px;
+  background: var(--nif-crimson); border-radius: 2px; margin: 14px auto 0;
+}
+.hero-name-np {
+  font-family: 'Noto Sans Devanagari', 'Mukta', sans-serif;
+  font-size: 18px; font-weight: 600; margin-top: 14px; color: rgba(255,255,255,0.92);
+}
+.hero-tagline { margin-top: 20px; font-size: 13px; color: rgba(255,255,255,0.62); line-height: 1.7; }
+.hero-tagline span {
+  display: block; font-family: 'Noto Sans Devanagari', 'Mukta', sans-serif;
+  font-size: 12px; color: rgba(255,255,255,0.52);
+}
+
+/* ---- Last-mile connectivity scene (layered over the Himalaya, desktop hero) ---- */
+.hero-network {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  width: 100%; height: 66%;                 /* covers the lower range, over the ridges */
+  color: #fff; pointer-events: none;        /* behind .hero-content (z-index:1) */
+}
+.hero-network .net-link { stroke: rgba(255,255,255,0.14); stroke-width: 1; fill: none; }
+.hero-network .net-arc  { stroke: rgba(255,255,255,0.13); stroke-width: 1; fill: none; }
+.hero-network .net-village {
+  stroke: rgba(255,255,255,0.34); stroke-width: 1.4; fill: none;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.hero-network .net-node { fill: rgba(255,255,255,0.60); }
+.hero-network .net-node-accent { fill: rgba(220,20,60,0.90); }   /* crimson relay/village */
+.hero-network .net-hub { fill: #fff; }
+.hero-network .net-hub-halo { fill: rgba(150,196,255,0.20); }    /* glow ring behind hub */
+/* Faint glowing "signal" travelling along links toward the remote villages */
+.hero-network .net-flow {
+  stroke: rgba(150,196,255,0.60); stroke-width: 1.3;
+  stroke-dasharray: 3 10;
+  animation: netFlow 3s linear infinite;
+}
+@keyframes netFlow { to { stroke-dashoffset: -130; } }
+.hero-network .net-twinkle { animation: netTwinkle 3.4s ease-in-out infinite; }
+@keyframes netTwinkle { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+/* ---- Drifting particles / faint stars in the upper navy sky ---- */
+.hero-particles { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.hero-particles span {
+  position: absolute; width: 3px; height: 3px; border-radius: 50%;
+  background: rgba(255,255,255,0.7); opacity: 0;
+  animation: particleDrift linear infinite; will-change: transform, opacity;
+}
+.hero-particles span:nth-child(1) { left: 14%; top: 16%; animation-duration: 9s;  animation-delay: 0s; }
+.hero-particles span:nth-child(2) { left: 34%; top: 26%; animation-duration: 11s; animation-delay: 1.5s; width: 2px; height: 2px; }
+.hero-particles span:nth-child(3) { left: 58%; top: 12%; animation-duration: 10s; animation-delay: 3s; }
+.hero-particles span:nth-child(4) { left: 72%; top: 30%; animation-duration: 12s; animation-delay: 0.8s; width: 2px; height: 2px; }
+.hero-particles span:nth-child(5) { left: 46%; top: 20%; animation-duration: 13s; animation-delay: 2.2s; }
+.hero-particles span:nth-child(6) { left: 86%; top: 22%; animation-duration: 10.5s; animation-delay: 4s; width: 2px; height: 2px; }
+@keyframes particleDrift {
+  0%   { transform: translateY(6px);   opacity: 0; }
+  20%  { opacity: 0.7; }
+  80%  { opacity: 0.7; }
+  100% { transform: translateY(-34px); opacity: 0; }
+}
+
+/* Motion is calm by default and OFF entirely for reduced-motion users. */
+@media (prefers-reduced-motion: reduce) {
+  .hero-network .net-flow { animation: none; }
+  .hero-network .net-twinkle { animation: none; opacity: 0.7; }
+  .mandala-spin { animation: none; }
+  .hero-particles span { animation: none; opacity: 0.5; }
+}
+
+/* Tablet/Mobile (<1024px): hero collapses; keep a tasteful, contained signal
+   accent behind the centered card (background gradients cannot overflow). */
+@media (max-width: 1023px) {
+  .login-panel {
+    background:
+      radial-gradient(520px 300px at 50% -6%, rgba(30, 58, 138, 0.08), transparent 70%),
+      radial-gradient(360px 260px at 100% 106%, rgba(220, 20, 60, 0.05), transparent 72%);
+  }
+}
+
+/* ---- Login panel (right on desktop, full on mobile) ---- */
+.login-panel {
+  display: grid;
+  place-items: center;              /* centers the card horizontally AND vertically */
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 44px 20px;
 }
 
 .auth-card {
+  position: relative;
   width: 100%;
   max-width: 440px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 20px;
-  box-shadow: var(--shadow-lg);
-  padding: 40px 36px 30px;
+  box-shadow: 0 18px 50px rgba(30, 58, 138, 0.10), 0 4px 14px rgba(30, 58, 138, 0.05);
+  padding: 40px 36px 26px;
+  overflow: hidden;
   animation: authCardIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* Thin Nepal-flag-color accent bar across the top of the card */
+.flag-bar {
+  position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, var(--nif-crimson) 0 52%, var(--nif-navy) 52% 100%);
 }
 
 .auth-brand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  margin-bottom: 28px;
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center; margin-bottom: 26px;
 }
-
-.auth-logo {
-  width: 190px;
-  max-width: 66%;
-  height: auto;
-  margin-bottom: 22px;
-}
+.auth-logo { width: 180px; max-width: 62%; height: auto; margin-bottom: 18px; }
 
 .auth-title {
-  /* Distinct display font (Poppins) — different from the Inter body font — with a
-     safe system-sans fallback so it never breaks if the webfont fails to load. */
+  /* Distinct display font (Poppins) — different from the Inter body font. */
   font-family: 'Poppins', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  font-size: 21px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  line-height: 1.3;
-  color: var(--brand-blue);         /* NIF dark navy #274095 */
-  text-wrap: balance;               /* graceful 1–2 line wrap, centered */
-  overflow-wrap: break-word;
+  font-size: 21px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.5px; line-height: 1.3;
+  color: var(--nif-navy);
+  text-wrap: balance; overflow-wrap: break-word;
+}
+.auth-devanagari {
+  font-family: 'Noto Sans Devanagari', 'Mukta', sans-serif;
+  font-size: 14px; font-weight: 600; color: var(--nif-navy);
+  margin-top: 6px; opacity: 0.85;
+}
+.auth-tagline {
+  margin-top: 6px; font-size: 13px; font-weight: 500;
+  letter-spacing: 0.02em; color: var(--text-secondary);
+}
+/* On desktop the hero carries the brand — the card stays focused on the form. */
+@media (min-width: 1024px) {
+  .auth-card .auth-logo,
+  .auth-card .auth-devanagari { display: none; }
+  .auth-brand { margin-bottom: 22px; }
 }
 @media (max-width: 420px) {
   .auth-title { font-size: 18px; letter-spacing: 1px; }
-}
-
-.auth-tagline {
-  margin-top: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--text-secondary);
 }
 
 .auth-form {
@@ -389,6 +535,7 @@ body {
 }
 
 .auth-submit {
+  position: relative;
   width: 100%;
   margin-top: 4px;
   padding: 13px 16px;
@@ -398,10 +545,24 @@ body {
   align-items: center;
   justify-content: center;
   gap: 4px;
+  background: var(--nif-navy);           /* NIF royal blue */
   transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease, opacity 0.15s ease;
 }
+/* Thin crimson (flag-color) underline that grows in on hover/focus */
+.auth-submit::after {
+  content: ''; position: absolute; left: 18px; right: 18px; bottom: 7px; height: 2px;
+  background: var(--nif-crimson); border-radius: 2px;
+  opacity: 0; transform: scaleX(0.35);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.auth-submit:not(:disabled):hover { background: #17306e; box-shadow: 0 10px 24px rgba(30, 58, 138, 0.26); }
+.auth-submit:not(:disabled):hover::after,
+.auth-submit:not(:disabled):focus-visible::after { opacity: 0.9; transform: scaleX(1); }
 .auth-submit:not(:disabled):active { transform: translateY(1px); }
 .auth-submit:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; }
+@media (prefers-reduced-motion: reduce) {
+  .auth-submit::after { transition: none; }
+}
 
 /* Button loading spinner */
 .auth-spinner {
@@ -423,6 +584,16 @@ body {
   text-align: center;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.auth-copyright {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
 }
 
 .alert {
@@ -448,12 +619,12 @@ body {
 }
 
 @media (max-width: 640px) {
-  .login-page { padding: 24px 14px; }
+  .login-panel { padding: 24px 14px; }
   .auth-card {
-    padding: 32px 22px 26px;
+    padding: 32px 22px 24px;
     border-radius: 18px;
   }
-  .auth-logo { width: 210px; max-width: 72%; }
+  .auth-logo { width: 200px; max-width: 70%; }
   .auth-title { font-size: 18px; }
 }
 
@@ -2115,6 +2286,22 @@ input, textarea, select { font-family: 'Inter', sans-serif; }
   .page [style*="repeat(3, 1fr)"] {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
+}
+
+@media (max-width: 640px) {
+  /* Dashboard stat cards (Pending / Approved / Rejected): keep a compact 2-up grid
+     on mobile instead of collapsing to full-width tall rows, and tighten the inline
+     padding/gap/margins so the page is short and scannable (was ~3960px tall).
+     Placed AFTER the generic collapse rule above so it wins at equal specificity. */
+  .page .dash-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+    margin-bottom: 16px !important;
+  }
+  .page .dash-stat-grid .side-card { padding: 16px !important; }   /* was 24px */
+  .page .dash-stat-grid .side-card > div { gap: 12px !important; } /* icon ↔ text */
+  /* Department Statistics stays a clean full-width card — just trim the gap below. */
+  .page .ds-card { margin-bottom: 16px !important; }               /* was 32px */
 }
 
 @media (max-width: 1023px) {

@@ -131,10 +131,7 @@ const AssetAssignment = () => {
     finally { setSaving(false); }
   };
 
-  if (!isManager) {
-    return <div className="page"><div className="empty-state"><div className="empty-msg">You do not have permission to view this page.</div></div></div>;
-  }
-
+  // Hooks must run unconditionally (before any early return) — react-hooks/rules-of-hooks.
   const grouped = useMemo(() => {
     if (!groupByEmp) return null;
     const g = new Map();
@@ -145,6 +142,10 @@ const AssetAssignment = () => {
     });
     return [...g.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [rows, groupByEmp]);
+
+  if (!isManager) {
+    return <div className="page"><div className="empty-state"><div className="empty-msg">You do not have permission to view this page.</div></div></div>;
+  }
 
   const ActionBtns = ({ r }) => (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>

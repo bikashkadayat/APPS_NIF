@@ -6,7 +6,14 @@ from .models import REPORT_FORMATS, ReportRun, ReportType, ScheduledReport
 class ReportRunSerializer(serializers.ModelSerializer):
     report_type_display = serializers.CharField(source="get_report_type_display", read_only=True)
     requested_by_name = serializers.SerializerMethodField()
-    file_url = serializers.ReadOnlyField()
+    file_url = serializers.SerializerMethodField()
+
+    def get_file_url(self, obj):
+        # Signed, expiring download URL — never a raw /media/ path.
+        if not obj.file:
+            return None
+        from documents.protected_media import signed_media_url
+        return signed_media_url(obj.file.name, ttl=600, download=True)
 
     class Meta:
         model = ReportRun

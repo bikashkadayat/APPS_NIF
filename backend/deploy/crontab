@@ -22,3 +22,11 @@
 
 # Monday 09:00 - send the opt-in weekly digest email (Phase 9)
 0 9 * * 1 cd /app && python manage.py send_weekly_digest > /proc/1/fd/1 2>/proc/1/fd/2
+
+# 05:00 daily - reconcile stale 'awaiting review' notifications with the actionable
+# queue (bell count can never drift from Pending Approvals).
+0 5 * * * cd /app && python manage.py reconcile_approval_notifications > /proc/1/fd/1 2>/proc/1/fd/2
+
+# 01:30 daily - encrypted, off-host database backup (rotates locally). Requires
+# BACKUP_ENCRYPTION_KEY (+ BACKUP_S3_BUCKET or BACKUP_RSYNC_TARGET) in .env.
+30 1 * * * sh /app/deploy/backup.sh > /proc/1/fd/1 2>/proc/1/fd/2

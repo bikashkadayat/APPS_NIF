@@ -1,0 +1,107 @@
+name: CI
+# Runs on every push and PR. All "blocking" jobs must pass before merge
+# (enforce via branch protection on `main` — see docs/CONTRIBUTING.md).
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest + ruff + migrations + audit)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_DB: leave_system
+          POSTGRES_USER: leave_user
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U leave_user -d leave_system"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_ENGINE: postgresql
+      DATABASE_HOST: localhost
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: leave_system
+      DATABASE_USER: leave_user
+      DATABASE_PASSWORD: postgres
+      DJANGO_SECRET_KEY: ci-test-secret-key
+      DJANGO_DEBUG: "True"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install system libs (WeasyPrint) + deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 shared-mime-info libmagic1
+          python -m pip install --upgrade pip
+          pip install -r requirements/development.txt
+
+      # --- Quality gate: lint (critical correctness rules) ---
+      - name: Ruff lint
+        run: ruff check .
+
+      # --- Quality gate: no model/migration drift ---
+      - name: Migration drift check
+        run: python manage.py makemigrations --check --dry-run
+
+      # --- Test gate: full suite + coverage (includes the /media security test) ---
+      - name: Pytest (with coverage)
+        run: pytest -q --cov=. --cov-report=term-missing --cov-report=xml
+
+      # --- Security gate: dependency audit (advisory; does not block on unfixable upstream advisories) ---
+      - name: pip-audit
+        continue-on-error: true
+        run: pip-audit -r requirements/production.txt
+
+  frontend:
+    name: Frontend (vitest + eslint + build + audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: Vitest
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: npm audit
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+  # --- Secret scan (whole repo) ---
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

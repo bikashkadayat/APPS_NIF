@@ -21,15 +21,16 @@ class UserSerializer(serializers.ModelSerializer):
     leave_category_display = serializers.SerializerMethodField()
     category_flag = serializers.SerializerMethodField()
     service_label = serializers.SerializerMethodField()
-    # Return the storage URL, NOT request.build_absolute_uri: behind the Vite/
-    # reverse proxy the request Host is the internal upstream (e.g. backend:8000),
-    # so an absolute URL would be unreachable by the browser. FileSystemStorage
-    # gives a root-relative '/media/...' (resolves against the app origin);
-    # S3Storage gives the absolute bucket URL. Null when there's no photo.
+    # Signed, expiring URL (documents.protected_media) — never a raw /media/ path.
+    # Header-free so it works in an <img>; only issued to authenticated requests
+    # (this serializer runs behind IsAuthenticated views). Null when there's no photo.
     profile_photo = serializers.SerializerMethodField()
 
     def get_profile_photo(self, obj):
-        return obj.profile_photo.url if obj.profile_photo else None
+        if not obj.profile_photo:
+            return None
+        from documents.protected_media import signed_media_url
+        return signed_media_url(obj.profile_photo.name)
 
     class Meta:
         model = User

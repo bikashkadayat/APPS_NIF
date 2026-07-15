@@ -184,6 +184,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 #                  uploads survive redeploys), or an S3-compatible bucket when
 #                  USE_S3=True (recommended at scale / multi-instance).
 # ---------------------------------------------------------------------------
+# Default lifetime (seconds) of signed media URLs (documents.protected_media).
+MEDIA_SIGNED_URL_TTL = int(os.getenv('MEDIA_SIGNED_URL_TTL', '3600'))
+
 USE_S3 = _env_bool('USE_S3', False)
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},

@@ -1,8 +1,9 @@
 from django.conf import settings
 from django.contrib import admin
 from django.urls import path, include, re_path
-from django.views.static import serve
 from rest_framework.routers import DefaultRouter
+
+from documents.protected_media import ProtectedMediaView
 
 from leaves.views import LeaveViewSet, LeaveBalanceView, LeaveCalendarView
 from users.views import CurrentUserView, UserListView, ChangePasswordView, ProfileMeView, ProfilePhotoView
@@ -81,11 +82,11 @@ urlpatterns = [
     path('api/v1/health/detailed/', DetailedHealthView.as_view(), name='health-detailed'),
 ]
 
-# Media files (uploaded memo attachments, profile photos, generated PDFs).
-# When USE_S3 is set the storage backend serves them from the bucket directly,
-# so no local route is registered. Otherwise Django serves them from the
-# MEDIA_ROOT persistent disk in both development and production.
+# Uploaded media (memo attachments/vouchers, profile photos, report files) is
+# served ONLY through signed, expiring URLs (documents.protected_media). The old
+# unauthenticated `serve` catch-all was removed — every file now requires a valid
+# server-issued signature, so there is no public /media/ access in dev or prod.
 if not settings.USE_S3:
     urlpatterns += [
-        re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+        path('api/v1/media/', ProtectedMediaView.as_view(), name='protected-media'),
     ]
