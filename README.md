@@ -24,6 +24,77 @@ A modern, role-based leave management system built with Django REST Framework (b
 - Node.js 16+
 - npm or yarn
 
+For the Docker workflow you only need **Docker** and the **Docker Compose plugin** — Python and Node are not required on the host.
+
+## Running with Docker (Recommended)
+
+The fastest way to run the whole stack (PostgreSQL + Django backend + cron worker + React frontend) is Docker Compose.
+
+### 1. Create the `.env` file
+
+The compose stack refuses to start without secrets. Copy the template and fill in the required values:
+
+```bash
+cp .env.example .env
+```
+
+At minimum set these two in `.env`:
+
+```bash
+# Generate a random key (requires Docker already running):
+#   docker run --rm python:3.10-slim python -c "import secrets; print(secrets.token_urlsafe(60))"
+DJANGO_SECRET_KEY=<a-long-random-string>
+
+# Any strong password for the local PostgreSQL container:
+DATABASE_PASSWORD=<a-strong-password>
+```
+
+`.env` is gitignored — never commit real secrets.
+
+### 2. Build and start
+
+```bash
+docker compose up -d --build
+```
+
+This starts four containers: `nif-db`, `nif-backend`, `nif-cron`, and `nif-frontend`. Database migrations and static file collection run automatically on backend startup.
+
+### 3. Create an admin login
+
+The stack does not seed users automatically. Create an initial admin account:
+
+```bash
+docker compose exec backend python manage.py seed_admin \
+  --email admin@gmail.com --password admin123 --name "System Administrator"
+```
+
+You will be prompted to change this password on first login.
+
+### 4. Access the application
+
+| Service      | URL                              |
+|--------------|----------------------------------|
+| Frontend     | http://localhost:5173            |
+| Backend API  | http://localhost:8001/api/v1/    |
+| Admin panel  | http://localhost:8001/admin/     |
+| PostgreSQL   | localhost:5434                   |
+
+> Host ports are remapped to avoid collisions: backend is exposed on **8001** (not 8000) and PostgreSQL on **5434** (not 5432).
+
+### Common commands
+
+```bash
+docker compose logs -f          # Tail logs from all services
+docker compose logs -f backend  # Tail a single service
+docker compose ps               # Show container status
+docker compose restart backend  # Restart one service
+docker compose down             # Stop and remove containers
+docker compose down -v          # Stop and also wipe the database volume (full reset)
+docker compose build --no-cache # Force a clean rebuild
+```
+
+For production deployment with HTTPS, use `docker-compose.prod.yml` — see `DOCKER.md` and `docs/DEPLOYMENT.md`.
+
 ## Project Structure
 
 ```
