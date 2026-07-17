@@ -21,7 +21,8 @@ class ItemAssignmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItemAssignment
         fields = [
-            "id", "item", "assigned_to", "assigned_to_name", "assigned_by",
+            "id", "item", "item_code", "item_name",
+            "assigned_to", "assigned_to_name", "assigned_by",
             "assigned_by_name", "note", "assigned_date", "assigned_date_bs",
             "handover_condition", "handover_condition_display", "accessories",
             "is_handover", "return_condition", "return_condition_display",
@@ -36,8 +37,10 @@ class ItemAssignmentSerializer(serializers.ModelSerializer):
 class AssignmentBoardSerializer(serializers.ModelSerializer):
     """Row for the 'who has what' board / My Assigned Assets — one active
     assignment enriched with the item + holder details needed at a glance."""
-    item_code = serializers.CharField(source="item.asset_code", read_only=True, default="")
-    item_name = serializers.CharField(source="item.name", read_only=True, default="")
+    # Prefer the live item, fall back to the snapshot so history stays readable
+    # after the asset itself is deleted (item FK is SET_NULL).
+    item_code = serializers.SerializerMethodField()
+    item_name = serializers.SerializerMethodField()
     item_status = serializers.CharField(source="item.status", read_only=True, default="")
     item_status_display = serializers.CharField(source="item.get_status_display", read_only=True, default="")
     asset_type = serializers.CharField(source="item.get_asset_type_display", read_only=True, default="")
@@ -59,6 +62,12 @@ class AssignmentBoardSerializer(serializers.ModelSerializer):
             "note", "is_handover", "is_active",
         ]
         read_only_fields = fields
+
+    def get_item_code(self, obj):
+        return obj.item.asset_code if obj.item_id else (obj.item_code or "")
+
+    def get_item_name(self, obj):
+        return obj.item.name if obj.item_id else (obj.item_name or "")
 
     def get_spec(self, obj):
         it = obj.item

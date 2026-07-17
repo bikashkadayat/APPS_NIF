@@ -110,7 +110,7 @@ function App() {
           <Route path="inventory/items/:id" element={<RequireAuth allowedRoles={['checker', 'approver', 'admin']}><InventoryItemDetail /></RequireAuth>} />
           <Route path="inventory/assignment" element={<RequireAuth allowedRoles={['checker', 'approver', 'admin']}><AssetAssignment /></RequireAuth>} />
           <Route path="inventory/my-assets" element={<MyAssignedAssets />} />
-          <Route path="inventory/my-requests" element={<RequireAuth allowedRoles={['maker', 'checker', 'approver']}><MyTakeOutRequests /></RequireAuth>} />
+          <Route path="inventory/my-requests" element={<RequireAuth allowedRoles={['maker', 'checker', 'approver', 'admin']}><MyTakeOutRequests /></RequireAuth>} />
           <Route path="inventory/approvals" element={<RequireAuth allowedRoles={['checker', 'approver', 'admin']}><TakeOutApprovals /></RequireAuth>} />
 
           {/* Phase 3 - Memos (specific paths before /memos/:id) */}

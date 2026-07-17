@@ -70,7 +70,9 @@ const InventoryItemDetail = () => {
           <div className="pg-title">{item.name}</div>
           <div className="pg-desc">{item.asset_code} · {item.asset_type_display} · {item.category_name || 'Uncategorised'}</div>
         </div>
-        {['approved', 'assigned', 'out'].includes(item.status) && item.current_holder && (
+        {/* 'assigned' = held in office, 'out' = held and taken out. (There is no
+            'approved' item status — that belongs to a take-out request, not an item.) */}
+        {['assigned', 'out'].includes(item.status) && item.current_holder && (
           <div className="pg-head-right">
             <button className="btn btn-primary" onClick={() => inventoryService.assignmentReceipt(item.id)}><FileText size={16} /> Handover Receipt</button>
           </div>

@@ -69,7 +69,8 @@ def assign_item(item_id, assignee, actor, *, note="", assigned_date=None,
         prior.returned_at = timezone.now()
         prior.save(update_fields=["is_active", "returned_at"])
     assignment = ItemAssignment.objects.create(
-        item=item, assigned_to=assignee, assigned_to_name=_name(assignee),
+        item=item, item_code=item.asset_code, item_name=item.name,
+        assigned_to=assignee, assigned_to_name=_name(assignee),
         assigned_by=actor, assigned_by_name=_name(actor), note=note,
         assigned_date=assigned_date or timezone.localtime(timezone.now()).date(),
         handover_condition=handover_condition or item.condition,
@@ -91,6 +92,13 @@ def handover_item(item_id, new_assignee, actor, *, note="", assigned_date=None,
 
 @transaction.atomic
 def return_item(item_id, actor, *, return_condition="", return_remarks=""):
+    """End the current assignment: the holder gives the asset back to the office.
+
+    This is the *assignment ended* path (distinct from ``mark_returned``, which only
+    ends a take-out). Any APPROVED take-out for the item is also closed here — the
+    asset is physically back, so leaving that request open would permanently block
+    future take-outs.
+    """
     item = InventoryItem.objects.select_for_update().get(pk=item_id)
     active = ItemAssignment.objects.select_for_update().filter(item=item, is_active=True).first()
     if active:
@@ -99,10 +107,13 @@ def return_item(item_id, actor, *, return_condition="", return_remarks=""):
         active.return_condition = return_condition or ""
         active.return_remarks = return_remarks or ""
         active.save(update_fields=["is_active", "returned_at", "return_condition", "return_remarks"])
+    _close_open_takeouts(item)
     if return_condition:
         item.condition = return_condition
     if item.status in (InventoryItem.Status.ASSIGNED, InventoryItem.Status.OUT):
-        item.status = InventoryItem.Status.AVAILABLE
+        # The assignment above is now closed, so this settles to AVAILABLE unless
+        # another active holder somehow remains.
+        item.status = _settle_item_status(item)
     item.save(update_fields=["status", "condition", "updated_at"])
     return item
 
@@ -110,9 +121,16 @@ def return_item(item_id, actor, *, return_condition="", return_remarks=""):
 # --------------------------------------------------------------------------- #
 # Take-out workflow
 # --------------------------------------------------------------------------- #
-def assert_item_takeable(item):
-    """Raise if the item cannot be taken out (retired / maintenance / already out
-    / an in-flight request exists)."""
+def assert_item_state_takeable(item):
+    """Raise if the item's OWN state forbids taking it out (missing / retired /
+    under maintenance / already outside).
+
+    This is the check that must hold at BOTH request time and approval time — the
+    item can be retired or taken out by someone else in between. It deliberately
+    excludes the in-flight-request check below: another *pending* request must not
+    block this one's approval (two pendings would otherwise deadlock each other),
+    while a competing *approved* one already shows up here as status OUT.
+    """
     if item is None:
         raise ValidationError("Item is required.")
     blocked = {
@@ -122,6 +140,12 @@ def assert_item_takeable(item):
     }
     if item.status in blocked:
         raise ValidationError(f"This item is {blocked[item.status]} and cannot be taken out.")
+
+
+def assert_item_takeable(item):
+    """Request-time gate: the item's state must allow it AND no request may already
+    be in flight (one active request per item)."""
+    assert_item_state_takeable(item)
     existing = TakeOutRequest.objects.filter(
         item=item, status__in=[TakeOutRequest.Status.PENDING, TakeOutRequest.Status.APPROVED]
     ).exists()
@@ -129,10 +153,44 @@ def assert_item_takeable(item):
         raise ValidationError("There is already an active take-out request for this item.")
 
 
+def _close_open_takeouts(item):
+    """Close APPROVED take-outs for an item that has physically come back.
+
+    An APPROVED request means "the item is outside". Once the item is returned via
+    any path, that request must reach a terminal state or ``assert_item_takeable``
+    would block the item from ever being taken out again (it counts APPROVED rows
+    as in-flight). PENDING requests are deliberately left alone: they are still
+    legitimately awaiting a decision and blocking on them is intended behaviour.
+    """
+    qs = TakeOutRequest.objects.select_for_update().filter(
+        item=item, status=TakeOutRequest.Status.APPROVED)
+    closed = 0
+    for req in qs:
+        req.status = TakeOutRequest.Status.RETURNED
+        req.actual_return_date = req.actual_return_date or timezone.localtime(timezone.now()).date()
+        req.save(update_fields=["status", "actual_return_date", "updated_at"])
+        closed += 1
+    return closed
+
+
+def _settle_item_status(item):
+    """Resolve an item's status from ground truth after it comes back to the office:
+    still directly assigned to someone -> ASSIGNED (holder retained), else AVAILABLE.
+    Never downgrades a RETIRED / MAINTENANCE item."""
+    if item.status in (InventoryItem.Status.RETIRED, InventoryItem.Status.MAINTENANCE):
+        return item.status
+    held = ItemAssignment.objects.filter(item=item, is_active=True).exists()
+    return InventoryItem.Status.ASSIGNED if held else InventoryItem.Status.AVAILABLE
+
+
 @transaction.atomic
 def create_takeout(*, item, requester, purpose, reason, expected_out_date, expected_return_date):
     item = InventoryItem.objects.select_for_update().get(pk=item.pk)
     assert_item_takeable(item)
+    # Nepal time: settings.TIME_ZONE is Asia/Kathmandu, so localtime() is NPT.
+    today = timezone.localtime(timezone.now()).date()
+    if expected_out_date < today:
+        raise ValidationError("The take-out date cannot be in the past.")
     if expected_return_date < expected_out_date:
         raise ValidationError("Expected return date cannot be before the take-out date.")
     dept = getattr(requester, "department_ref", None)
@@ -152,6 +210,12 @@ def approve_takeout(req_id, actor, remarks=""):
     req = TakeOutRequest.objects.select_for_update().get(pk=req_id)
     if req.status != TakeOutRequest.Status.PENDING:
         raise ValidationError("Only a pending request can be approved.")
+    # Re-validate against the item's CURRENT state: it may have been retired, sent
+    # for maintenance, deleted or taken out by another request since this one was
+    # raised.
+    item = (InventoryItem.objects.select_for_update().get(pk=req.item_id)
+            if req.item_id else None)
+    assert_item_state_takeable(item)
     req.status = TakeOutRequest.Status.APPROVED
     req.approver = actor
     req.approver_name = _name(actor)
@@ -159,10 +223,8 @@ def approve_takeout(req_id, actor, remarks=""):
     req.action_date = timezone.now()
     req.save(update_fields=["status", "approver", "approver_name", "approver_remarks",
                             "action_date", "updated_at"])
-    if req.item_id:
-        item = InventoryItem.objects.select_for_update().get(pk=req.item_id)
-        item.status = InventoryItem.Status.OUT
-        item.save(update_fields=["status", "updated_at"])
+    item.status = InventoryItem.Status.OUT
+    item.save(update_fields=["status", "updated_at"])
     return req
 
 
@@ -194,8 +256,10 @@ def mark_returned(req_id, actor):
     req.save(update_fields=["status", "actual_return_date", "updated_at"])
     if req.item_id:
         item = InventoryItem.objects.select_for_update().get(pk=req.item_id)
-        # Back to available unless it is still directly assigned to someone.
+        # The item is back in the office, but a take-out return does NOT end the
+        # underlying assignment: if someone still holds it, it settles back to
+        # ASSIGNED (holder retained) rather than falsely reading AVAILABLE.
         if item.status == InventoryItem.Status.OUT:
-            item.status = InventoryItem.Status.AVAILABLE
+            item.status = _settle_item_status(item)
             item.save(update_fields=["status", "updated_at"])
     return req

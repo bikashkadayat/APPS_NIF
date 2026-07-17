@@ -1,6 +1,7 @@
 from django.http import HttpResponse
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,6 +15,18 @@ from .models import InventoryCategory, InventoryItem, TakeOutRequest
 from .permissions import InventoryItemPermission, IsManager, is_manager
 from .serializers import (
     InventoryCategorySerializer, InventoryItemSerializer, TakeOutRequestSerializer)
+
+
+def _dept_scoped(qs, field, department_id):
+    """Scope a queryset to a Dept Head's own department.
+
+    A manager with NO department must see NOTHING department-scoped. Filtering on a
+    None department_id would compile to `IS NULL` and match every unscoped row —
+    i.e. hand a department-less Dept Head other people's assets. Guard it explicitly.
+    """
+    if department_id is None:
+        return qs.none()
+    return qs.filter(**{field: department_id})
 
 
 def _clear_takeout_notices(req_id):
@@ -64,7 +77,7 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             qs = qs.filter(assignments__assigned_to=user, assignments__is_active=True).distinct()
         elif user.role == User.Roles.CHECKER:
             # Dept Head: manager access scoped to items in their own department.
-            qs = qs.filter(department_id=user.department_ref_id)
+            qs = _dept_scoped(qs, "department_id", user.department_ref_id)
         p = self.request.query_params
         if p.get("status"):
             qs = qs.filter(status=p["status"])
@@ -99,15 +112,21 @@ class InventoryItemViewSet(viewsets.ModelViewSet):
             return None, Response({"detail": "Employee not found."}, status=status.HTTP_404_NOT_FOUND)
 
     def _parse_date(self, request, field):
+        """Parse an optional YYYY-MM-DD field.
+
+        Absent/blank -> None (the caller's documented default applies). Malformed ->
+        ValidationError (400): silently substituting today would record a wrong
+        business date that nobody can tell apart from a real one.
+        """
         raw = request.data.get(field)
-        if not raw:
+        if raw in (None, ""):
             return None
         from datetime import date
         try:
             y, m, d = (int(x) for x in str(raw).split("-"))
             return date(y, m, d)
         except (ValueError, TypeError):
-            return None
+            raise DRFValidationError({field: [f"Invalid date '{raw}'. Expected format YYYY-MM-DD."]})
 
     @action(detail=True, methods=["post"], permission_classes=[IsManager])
     def assign(self, request, pk=None):
@@ -207,7 +226,7 @@ class AssignmentViewSet(viewsets.ReadOnlyModelViewSet):
         # Dept Head is scoped to holders in their own department.
         user = self.request.user
         if user.role == User.Roles.CHECKER:
-            qs = qs.filter(assigned_to__department_ref_id=user.department_ref_id)
+            qs = _dept_scoped(qs, "assigned_to__department_ref_id", user.department_ref_id)
         p = self.request.query_params
         if p.get("employee"):
             qs = qs.filter(assigned_to_id=p["employee"])
@@ -240,9 +259,13 @@ class TakeOutRequestViewSet(viewsets.ModelViewSet):
         if user.role in (User.Roles.ADMIN, User.Roles.APPROVER):
             pass  # HR / Admin: org-wide
         elif user.role == User.Roles.CHECKER:
-            # Dept Head: own department's requests + own requests.
+            # Dept Head: own department's requests + own requests. With no department
+            # this must fall back to own requests only — a None department_id would
+            # otherwise match every unscoped request (same flaw as the item list).
             from django.db.models import Q
-            qs = qs.filter(Q(department_id=user.department_ref_id) | Q(requested_by=user))
+            own = Q(requested_by=user)
+            qs = qs.filter(own if user.department_ref_id is None
+                           else Q(department_id=user.department_ref_id) | own)
         else:
             qs = qs.filter(requested_by=user)  # Employee: own only
         p = self.request.query_params
@@ -271,6 +294,11 @@ class TakeOutRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], permission_classes=[IsManager])
     def approve(self, request, pk=None):
         req = self.get_object()
+        # Segregation of duties: a manager may not approve their own take-out — it
+        # must go to another manager / HR / Admin. Mirrors the leaves module
+        # ("You cannot approve your own leave", leaves/views.py).
+        if req.requested_by_id == request.user.id:
+            raise PermissionDenied("You cannot approve your own take-out request.")
         req = services.approve_takeout(req.id, request.user, remarks=request.data.get("remarks", ""))
         log_action(request.user, AuditLog.Action.APPROVE, instance=req,
                    changes={"event": "TAKEOUT_APPROVED", "reference": req.reference}, request=request)

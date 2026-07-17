@@ -118,9 +118,17 @@ class InventoryItem(models.Model):
 
 
 class ItemAssignment(models.Model):
-    """WHO is currently using an item. At most one active row per item."""
+    """WHO is currently using an item. At most one active row per item.
+
+    The item FK is SET_NULL + snapshots (matching TakeOutRequest) so custody history
+    — who held what — survives deletion of the item itself.
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    item = models.ForeignKey(InventoryItem, on_delete=models.CASCADE, related_name="assignments")
+    item = models.ForeignKey(
+        InventoryItem, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="assignments")
+    item_code = models.CharField(max_length=32, blank=True, default="")
+    item_name = models.CharField(max_length=150, blank=True, default="")
     assigned_to = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="inventory_assignments")
@@ -153,7 +161,9 @@ class ItemAssignment(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.item.asset_code} → {self.assigned_to_name} ({'active' if self.is_active else 'closed'})"
+        # item may be NULL (deleted asset) — fall back to the snapshot.
+        code = self.item.asset_code if self.item_id else (self.item_code or "—")
+        return f"{code} → {self.assigned_to_name} ({'active' if self.is_active else 'closed'})"
 
 
 class TakeOutRequest(models.Model):
