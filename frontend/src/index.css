@@ -258,7 +258,15 @@ body {
 .main { flex: 1; overflow-y: auto; overflow-x: hidden; }
 /* Opacity-only entrance (no transform): a `transform` on .page makes native
    <select> popups mis-anchor to the far-left on mobile (Chromium bug). */
-.page { padding: 48px; max-width: 1400px; margin: 0 auto; animation: pageIn 0.4s ease both; }
+/* `animation-fill-mode: backwards`, NOT `both`. An opacity animation creates a
+   stacking context, and `both` (= forwards) keeps that animation applying forever
+   — which permanently traps every modal rendered inside .page in .page's stacking
+   context, where no z-index can lift it above the sticky header (z-index 1000).
+   That is the root cause of the recurring "modal title clipped under the header"
+   bug. `backwards` keeps the identical fade-in (and the pre-start opacity:0, so no
+   flash) but stops applying once the animation ends, so the stacking context — and
+   the trap — disappears. Do not change this back to `both`. */
+.page { padding: 48px; max-width: 1400px; margin: 0 auto; animation: pageIn 0.4s ease backwards; }
 @keyframes pageIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* ── NIF LOGIN — split-hero with subtle Nepali motifs ── */
@@ -1216,7 +1224,10 @@ tr.mrow:hover td { background: rgba(var(--brand-blue-rgb), 0.02); cursor: pointe
    always fully visible (negative margins let it span the panel's padding). */
 .modal-content > h3:first-child {
   position: sticky;
-  top: 0;
+  /* -24px, not 0: sticky constrains the margin box, so `top:0` combined with
+     margin-top:-24px pins the title 24px low and lets scrolling content bleed
+     through the gap above it. This cancels the negative margin. */
+  top: -24px;
   margin: -24px -24px 16px;
   padding: 24px 24px 12px;
   background: var(--white);
@@ -1786,9 +1797,29 @@ input, textarea, select { font-family: 'Inter', sans-serif; }
 .lr-cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
 
 /* --- Popover --- */
-.lr-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
-.lr-modal { background: var(--bg-card); border-radius: var(--radius-md); max-width: 420px; width: 100%; padding: 20px; box-shadow: var(--shadow-lg); }
-.lr-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+/* z-index 1300 matches .modal-overlay: above the sticky header (1000) and the
+   mobile sidebar (1100/1200). It was 1000 — an exact tie with the header, decided
+   only by DOM order. Overlay scrolls as a last resort if a panel still overflows. */
+.lr-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 1300; padding: 24px 16px; overflow-y: auto; overscroll-behavior: contain; }
+/* Never exceed the viewport: tall forms scroll INSIDE the panel. margin:auto
+   centers short modals and keeps the top reachable when content is very tall. */
+.lr-modal { background: var(--bg-card); border-radius: var(--radius-md); max-width: 420px; width: 100%; padding: 20px; box-shadow: var(--shadow-lg); max-height: calc(100vh - 48px); overflow-y: auto; margin: auto; }
+/* Title pinned to the top while the body scrolls; negative margins let it span the
+   panel's 20px padding so it covers the full width.
+   `top: -20px` (NOT 0) is deliberate and load-bearing: sticky offsets constrain the
+   MARGIN box, so with margin-top:-20px a `top:0` would pin the border box 20px too
+   low and leave an uncovered band that scrolling fields bleed through above the
+   title. -20px cancels the margin and pins the panel's actual top edge. */
+.lr-modal-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -20px; z-index: 2; background: var(--bg-card); margin: -20px -20px 12px; padding: 20px 20px 12px; border-radius: var(--radius-md) var(--radius-md) 0 0; }
+/* Opt-in sticky action bar (Save/Cancel always reachable on tall forms).
+   `bottom: -20px` mirrors the head: it cancels margin-bottom:-20px so content
+   cannot bleed through beneath the buttons. */
+.lr-modal-foot { position: sticky; bottom: -20px; z-index: 2; background: var(--bg-card); display: flex; justify-content: flex-end; gap: 10px; margin: 12px -20px -20px; padding: 12px 20px 20px; border-radius: 0 0 var(--radius-md) var(--radius-md); }
+/* dvh accounts for mobile browser chrome (address bar) — matches .modal-content. */
+@media (max-width: 640px) {
+  .lr-modal-overlay { padding: 12px 10px; }
+  .lr-modal { max-height: calc(100dvh - 24px); }
+}
 .lr-modal-head h3 { font-family: "Playfair Display", serif; font-size: 18px; margin: 0; }
 .lr-modal-close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--text-muted); }
 .lr-modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }

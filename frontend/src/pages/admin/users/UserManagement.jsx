@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userMgmtService } from '../../../services/userMgmtService';
 import ConfirmModal from '../../../components/admin/ConfirmModal';
+import Modal from '../../../components/common/Modal';
 import Toast from '../../../components/admin/Toast';
 import { Skeleton, EmptyState, ErrorState } from '../../../components/leave-records/States';
 import { ROLES, ROLE_LABELS, roleLabel, EMPLOYEE_TYPES, employeeTypeLabel,
@@ -53,9 +54,16 @@ const CreateUserModal = ({ busy, onClose, onSubmit }) => {
     });
   };
   return (
-    <div className="lr-modal-overlay" role="dialog" aria-modal="true" aria-label="Create employee" onClick={onClose}>
-      <div className="lr-modal" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
-        <div className="lr-modal-head"><h3>Create employee</h3><button type="button" className="lr-modal-close" aria-label="Close" onClick={onClose}>×</button></div>
+    <Modal
+      title="Create employee"
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="lr-btn lr-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="lr-btn lr-btn-primary" disabled={!valid || busy} onClick={submit}>Create</button>
+        </>
+      )}
+    >
         <label className="lr-field"><span>Employee ID</span><input value="Auto-generated on save" disabled readOnly aria-label="Employee ID" /></label>
         <label className="lr-field"><span>Full name *</span><input value={form.full_name} onChange={set('full_name')} aria-label="Full name" /></label>
         <label className="lr-field"><span>Email *</span><input type="email" value={form.email} onChange={set('email')} aria-label="Email" /></label>
@@ -100,29 +108,23 @@ const CreateUserModal = ({ busy, onClose, onSubmit }) => {
           </select>
         </label>
         <label className="lr-field"><span>Password (blank = auto-generate)</span><input value={form.password} onChange={set('password')} aria-label="Password" /></label>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
-          <button type="button" className="lr-btn lr-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="button" className="lr-btn lr-btn-primary" disabled={!valid || busy} onClick={submit}>Create</button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
 
 const CredentialsModal = ({ email, password, onClose }) => (
-  <div className="lr-modal-overlay" role="dialog" aria-modal="true" aria-label="Account credentials" onClick={onClose}>
-    <div className="lr-modal" onClick={(e) => e.stopPropagation()}>
-      <div className="lr-modal-head"><h3>Account created</h3><button type="button" className="lr-modal-close" aria-label="Close" onClick={onClose}>×</button></div>
-      <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Share these credentials with the employee. They must change the password on first login.</p>
-      <dl className="lr-modal-grid">
-        <div><dt>Email</dt><dd>{email}</dd></div>
-        <div><dt>Temporary password</dt><dd><code>{password}</code></dd></div>
-      </dl>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-        <button type="button" className="lr-btn lr-btn-primary" onClick={onClose}>Done</button>
-      </div>
-    </div>
-  </div>
+  <Modal
+    title="Account created"
+    ariaLabel="Account credentials"
+    onClose={onClose}
+    footer={<button type="button" className="lr-btn lr-btn-primary" onClick={onClose}>Done</button>}
+  >
+    <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Share these credentials with the employee. They must change the password on first login.</p>
+    <dl className="lr-modal-grid">
+      <div><dt>Email</dt><dd>{email}</dd></div>
+      <div><dt>Temporary password</dt><dd><code>{password}</code></dd></div>
+    </dl>
+  </Modal>
 );
 
 const UserManagement = () => {

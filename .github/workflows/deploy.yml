@@ -1,0 +1,165 @@
+name: Deploy
+
+# Runs ONLY after the CI workflow finishes successfully on `main` (i.e. after a PR
+# is merged, or a direct push). See docs/CICD.md for why workflow_run is used here
+# rather than `needs:`.
+#
+# Guards below ensure we never deploy a red build:
+#   * workflows: ["CI"]            -> only chains off the CI workflow
+#   * branches: [main]             -> only main
+#   * conclusion == 'success'      -> CI must be green
+#   * event == 'push'              -> a merged PR / direct push, never a PR build
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # Manual re-deploy / rollback escape hatch.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy (defaults to origin/main HEAD)"
+        required: false
+        type: string
+
+# Never let two deploys touch the VPS at once. cancel-in-progress is false: a
+# half-finished deploy must be allowed to finish (or roll itself back) rather
+# than be killed mid-build.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    # Optional: add required reviewers / wait timers to this environment in
+    # Settings -> Environments -> production.
+    environment: production
+    timeout-minutes: 30
+
+    steps:
+      - name: Resolve target commit
+        id: target
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          # Pin the exact commit CI verified. On workflow_dispatch with no input,
+          # the VPS falls back to origin/main HEAD.
+          SHA="${INPUT_SHA:-$RUN_SHA}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Deploying: ${SHA:-origin/main HEAD}"
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          PROJECT_PATH: ${{ secrets.VPS_PROJECT_PATH }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          # Forward the two values the remote script needs. Everything else
+          # (secrets, domain, SMTP) already lives in the VPS .env — it is
+          # deliberately NOT duplicated into GitHub.
+          envs: TARGET_SHA,PROJECT_PATH
+          command_timeout: 25m
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            cd "${PROJECT_PATH}"
+            COMPOSE="docker compose -f docker-compose.prod.yml"
+
+            # --- Pin the working tree to the CI-verified commit -----------------
+            # reset --hard only rewrites TRACKED files: the gitignored .env, the
+            # named volumes (postgres_data, media_data, caddy_data) and any other
+            # untracked file on the VPS are untouched.
+            git fetch --prune origin main
+            TARGET="${TARGET_SHA:-$(git rev-parse origin/main)}"
+            PREVIOUS="$(git rev-parse HEAD)"
+            echo "==> deploying ${TARGET}  (current: ${PREVIOUS})"
+
+            git checkout -B main
+            git reset --hard "${TARGET}"
+
+            # --- Build + start -------------------------------------------------
+            # The backend image CMD runs `migrate --noinput` and
+            # `collectstatic --noinput --clear` BEFORE gunicorn binds, so both
+            # happen automatically here and are verified below.
+            $COMPOSE up -d --build
+
+            # --- Wait for the backend to report healthy ------------------------
+            # Uses the healthcheck already declared in docker-compose.prod.yml,
+            # which polls /api/v1/health/ inside the container.
+            # `|| true` + head -1 keeps a missing/!ready container from aborting the
+            # script under `set -e` and collapses docker's empty-line output.
+            probe() { docker inspect -f "$1" nif-backend 2>/dev/null | head -1 || true; }
+
+            wait_healthy() {
+              for _ in $(seq 1 60); do
+                state=$(probe '{{.State.Status}}')
+                health=$(probe '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+                if [ "$state" = "running" ] && [ "$health" = "healthy" ]; then return 0; fi
+                # migrate/collectstatic run in the image CMD, so a bad migration
+                # exits the container instead of ever reporting unhealthy.
+                if [ "$state" = "exited" ] || [ "$health" = "unhealthy" ]; then return 1; fi
+                sleep 5
+              done
+              echo "timed out after ~5 minutes waiting for nif-backend"
+              return 1
+            }
+
+            if ! wait_healthy; then
+              echo "!!! backend did not become healthy — rolling back to ${PREVIOUS}"
+              $COMPOSE logs --tail=100 backend || true
+              git reset --hard "${PREVIOUS}"
+              $COMPOSE up -d --build
+              echo "!!! rolled back to ${PREVIOUS}. NOTE: database migrations are NOT"
+              echo "!!! reverted — if this release migrated the schema, verify by hand."
+              exit 1
+            fi
+
+            # --- Verify migrations + health explicitly -------------------------
+            # Idempotent: normally prints "No migrations to apply" because the
+            # image CMD already ran it. Kept as an explicit gate so a missed
+            # migration fails the deploy loudly.
+            $COMPOSE exec -T backend python manage.py migrate --noinput
+
+            # Direct hit on gunicorn inside the compose network.
+            $COMPOSE exec -T backend python -c "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/api/v1/health/'); sys.exit(0 if r.status==200 else 1)"
+
+            echo "==> deployed ${TARGET} successfully"
+            $COMPOSE ps
+
+      - name: Public health check (end-to-end through Caddy + TLS)
+        env:
+          URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          if [ -z "${URL}" ]; then
+            echo "HEALTHCHECK_URL not set — skipping the public check."
+            echo "(The in-VPS container health gate already passed.)"
+            exit 0
+          fi
+          echo "Probing ${URL}"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+                   --retry 6 --retry-delay 5 --retry-all-errors \
+                   --max-time 20 "${URL}")
+          echo "HTTP ${code}"
+          if [ "${code}" != "200" ]; then
+            echo "::error::Public health check failed (HTTP ${code}) — the site is not serving."
+            exit 1
+          fi
+
+      - name: Report failure
+        if: failure()
+        run: |
+          echo "::error::Deploy failed for ${{ steps.target.outputs.sha }}."
+          echo "The VPS script rolls the code back automatically if the backend"
+          echo "never became healthy. Check the SSH step log above."

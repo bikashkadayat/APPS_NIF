@@ -35,11 +35,16 @@ def actors(db):
     return emp, head, hr
 
 
-def _apply(emp, hr):
+def _apply(emp, approver):
+    """Submit a leave, selecting `approver` as the reporting manager.
+
+    The selected manager is the primary approver (leaves.approvals), so pass the
+    person the test expects to act — these tests have the Dept Head review.
+    """
     c = APIClient(); c.force_authenticate(emp)
     r = c.post("/api/v1/leaves/", {
         "leave_type": "annual", "start_date": str(MONDAY), "end_date": str(END),
-        "reason": "Family event", "approver": str(hr.id),
+        "reason": "Family event", "approver": str(approver.id),
     }, format="json")
     assert r.status_code == 201, r.content
     return r.json()["id"]
@@ -50,7 +55,7 @@ def _apply(emp, hr):
 def test_submit_notifies_dept_head_and_hr_cc(actors):
     emp, head, hr = actors
     mail.outbox = []
-    _apply(emp, hr)
+    _apply(emp, head)
     recipients = {addr for m in mail.outbox for addr in m.to}
     assert head.email in recipients            # Dept Head (dynamic, by department)
     assert hr.email in recipients              # HR CC
@@ -66,7 +71,7 @@ def test_dept_head_grant_notifies_employee_and_hr_record(actors):
     """Dept Head approval is final: the employee is emailed 'Approved' and HR gets
     a record copy (not an action item)."""
     emp, head, hr = actors
-    leave_id = _apply(emp, hr)
+    leave_id = _apply(emp, head)
     mail.outbox = []
     c = APIClient(); c.force_authenticate(head)
     r = c.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
@@ -85,7 +90,7 @@ def test_grant_emails_employee_login_email(actors):
     """The grant email goes to the employee's account (login) email on Dept Head
     approval — no HR second stage required."""
     emp, head, hr = actors
-    leave_id = _apply(emp, hr)
+    leave_id = _apply(emp, head)
     mail.outbox = []
     ch = APIClient(); ch.force_authenticate(head)
     r = ch.post(f"/api/v1/leaves/{leave_id}/dept-head-review/", {"decision": "approve"}, format="json")
@@ -99,7 +104,7 @@ def test_grant_emails_employee_login_email(actors):
 @pytest.mark.django_db
 def test_l1_rejection_emails_employee(actors):
     emp, head, hr = actors
-    leave_id = _apply(emp, hr)
+    leave_id = _apply(emp, head)
     mail.outbox = []
     c = APIClient(); c.force_authenticate(head)
     r = c.post(f"/api/v1/leaves/{leave_id}/dept-head-review/",
@@ -115,7 +120,7 @@ def test_email_failure_never_breaks_workflow(actors):
     """A raising SMTP send must not fail the API; it is logged as 'failed'."""
     emp, head, hr = actors
     with patch("notifications.emails.EmailMultiAlternatives.send", side_effect=RuntimeError("smtp down")):
-        leave_id = _apply(emp, hr)  # still 201 despite email blowing up
+        leave_id = _apply(emp, head)  # still 201 despite email blowing up
     assert Leave.objects.filter(pk=leave_id).exists()
     assert NotificationLog.objects.filter(status="failed").exists()
 
@@ -124,7 +129,7 @@ def test_email_failure_never_breaks_workflow(actors):
 @pytest.mark.django_db
 def test_notifications_are_deduplicated(actors):
     emp, head, hr = actors
-    leave_id = _apply(emp, hr)
+    leave_id = _apply(emp, head)
     leave = Leave.objects.get(pk=leave_id)
     mail.outbox = []
     # The status transition fires leave_finalized once (via the post_save signal);

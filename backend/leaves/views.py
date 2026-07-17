@@ -49,7 +49,11 @@ class LeaveViewSet(viewsets.ModelViewSet):
             review = Q(status=Leave.Status.PENDING)
             if user.department_ref_id:
                 review &= Q(user__department_ref_id=user.department_ref_id)
-            return base.filter(own | review).distinct()
+            # 3. leaves where THIS head is the reporting manager the employee
+            #    selected — they may sit in another department, so the department
+            #    filter above would otherwise hide a request routed to them.
+            chosen = Q(status=Leave.Status.PENDING, approver=user)
+            return base.filter(own | review | chosen).distinct()
 
         if user.role in [User.Roles.APPROVER, User.Roles.ADMIN]:
             # HR / Admin: all departments (Level-2 queue is status=PENDING_HR).
@@ -186,8 +190,15 @@ class LeaveViewSet(viewsets.ModelViewSet):
                 "Only the Department Head grants leave. HR/Admin may act only as a "
                 "fallback when the department has no active Department Head."
             )
-        # A Department Head is scoped to leave from their OWN department.
-        if is_dept_head and actor.department_ref_id and leave.user.department_ref_id != actor.department_ref_id:
+        # A Department Head is scoped to leave from their OWN department — UNLESS
+        # the employee explicitly selected them as their reporting manager, which
+        # is exactly what routed the request to them (leaves.approvals). Without
+        # this, a head chosen from another department would see the request in
+        # their queue and then be refused when they tried to act on it.
+        from .approvals import selection_is_actionable
+        is_selected_manager = leave.approver_id == actor.id and selection_is_actionable(leave)
+        if (is_dept_head and not is_selected_manager and actor.department_ref_id
+                and leave.user.department_ref_id != actor.department_ref_id):
             raise PermissionDenied("You can only review leave from your own department.")
         if leave.status != Leave.Status.PENDING:
             return Response({"error": "Leave is not awaiting Department Head review."}, status=status.HTTP_400_BAD_REQUEST)
